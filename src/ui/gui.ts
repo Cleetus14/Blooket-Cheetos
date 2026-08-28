@@ -554,7 +554,7 @@ export function mountPanel(api: CheatApi): PanelHandle {
     background: C.bg2,
     textAlign: "center",
   });
-  footer.textContent = "Ctrl+Shift+X hides/shows this panel";
+  footer.textContent = "Ctrl+Shift+X (or Ctrl+Shift+E) hides/shows this panel";
   panel.appendChild(footer);
 
   root.appendChild(panel);
@@ -654,17 +654,24 @@ export function mountPanel(api: CheatApi): PanelHandle {
 
   let lastHotkey = 0;
   const onHotkey = (e: KeyboardEvent) => {
-    const isX = e.code === "KeyX" || e.key === "X" || e.key === "x";
-    if (!(e.ctrlKey && e.shiftKey && isX)) return;
+    const key = (e.code || e.key || "").toLowerCase();
+    const isToggle = key === "keyx" || key === "x" || key === "keye" || key === "e";
+    if (!(e.ctrlKey && e.shiftKey && isToggle)) return;
     e.preventDefault();
     e.stopPropagation();
     const now = Date.now();
-    if (now - lastHotkey < 80) return;
+    if (now - lastHotkey < 120) return;
     lastHotkey = now;
     togglePanel();
+    console.log(
+      "%c[Cheetos]%c panel " + (panel.style.display === "none" ? "hidden" : "shown"),
+      "color:#facc15",
+      "color:inherit",
+    );
   };
   window.addEventListener("keydown", onHotkey, true);
   document.addEventListener("keydown", onHotkey, true);
+  if (document.body) document.body.addEventListener("keydown", onHotkey, true);
 
   document.body.appendChild(root);
   makeDraggable(panel, head);

@@ -4,34 +4,22 @@ function isCheetosEl(el: HTMLElement | null): boolean {
   return !!el && (el.id === "cheetos-root" || el.id === "cheetos-panel" || el.id === "cheetos-toggle");
 }
 
-function isGameStateNode(stateNode: AnyNode): boolean {
-  if (!stateNode || typeof stateNode.setState !== "function" || !stateNode.state) return false;
-  const s = stateNode.state;
-  const p = stateNode.props;
-  if (p?.liveGameController) return true;
-  if (typeof s.stage === "string" && s.stage) return true;
-  if (typeof s.phase === "string" && s.phase) return true;
-  if (s.question) return true;
-  if (typeof s.gold === "number") return true;
-  if (typeof s.crypto === "number") return true;
-  if (typeof s.cash === "number") return true;
-  return false;
-}
-
+// Mirrors 05konz's reference walk: descend `body>div > div > ...` and return
+// the first React class-component instance reachable through
+// `__reactProps$....children[0]._owner.stateNode`. We intentionally do NOT
+// filter on game-specific fields (liveGameController/stage/gold/etc.) because
+// that over-shoots into a wrong (or null) node in the lobby or when Blooket
+// wraps the game component in a provider.
 function classicStateNode(root: HTMLElement): AnyNode | null {
   let current: HTMLElement | null = root;
   let depth = 0;
   while (current && depth < 600) {
-    const entry: AnyNode = (Object.values(current) as AnyNode[])[1];
-    if (entry?.children?.[0]?._owner?.stateNode) {
-      try {
-        const stateNode = entry.children[0]._owner.stateNode;
-        if (isGameStateNode(stateNode)) return stateNode;
-      } catch {
-        /* keep walking */
-      }
+    const props: AnyNode = (Object.values(current) as AnyNode[])[1];
+    const stateNode = props?.children?.[0]?._owner?.stateNode;
+    if (stateNode && typeof stateNode.setState === "function" && stateNode.state) {
+      return stateNode;
     }
-    const child: HTMLElement | null = current.querySelector(":scope>div");
+    const child: HTMLElement | null = current.querySelector?.(":scope>div") ?? null;
     if (!child || child === current) break;
     current = child;
     depth++;
@@ -41,7 +29,13 @@ function classicStateNode(root: HTMLElement): AnyNode | null {
 
 function fiberKey(el: HTMLElement): string | null {
   for (const key of Object.keys(el)) {
-    if (key.startsWith("__reactFiber$") || key.startsWith("__reactInternalInstance$")) return key;
+    if (
+      key.startsWith("__reactFiber$") ||
+      key.startsWith("__reactInternalInstance$") ||
+      key.startsWith("__reactContainer$")
+    ) {
+      return key;
+    }
   }
   return null;
 }
@@ -51,6 +45,7 @@ function getFiber(el: HTMLElement): AnyNode | null {
   return key ? (el as AnyNode)[key] : null;
 }
 
+// Fallback for React builds where the props-based walk above is unavailable.
 function walkFiber(fiber: AnyNode): AnyNode | null {
   const seen = new Set<AnyNode>();
   const stack: AnyNode[] = [fiber];
@@ -59,7 +54,14 @@ function walkFiber(fiber: AnyNode): AnyNode | null {
     if (!f || seen.has(f)) continue;
     seen.add(f);
     const stateNode = f.stateNode;
-    if (stateNode && stateNode !== f && isGameStateNode(stateNode)) return stateNode;
+    if (
+      stateNode &&
+      stateNode !== f &&
+      typeof stateNode.setState === "function" &&
+      stateNode.state
+    ) {
+      return stateNode;
+    }
     if (f.child) stack.push(f.child);
     if (f.sibling) stack.push(f.sibling);
   }
