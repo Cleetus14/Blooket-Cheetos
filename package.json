@@ -1,14 +1,15 @@
 {
   "name": "blooket-cheetos",
-  "version": "1.4.4",
+  "version": "1.5.0",
   "private": true,
   "description": "Bookmarklet-based Blooket client cheat.",
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build": "node scripts/build.mjs",
-    "test": "npm run smoke",
+    "test": "npm run smoke && npm run test:runtime",
     "smoke": "node scripts/smoke.mjs",
+    "test:runtime": "node scripts/runtime.mjs",
     "dev": "node scripts/build.mjs --watch"
   },
   "devDependencies": {

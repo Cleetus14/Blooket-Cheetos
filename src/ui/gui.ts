@@ -3,6 +3,7 @@ import type { AppContext } from "../core/context";
 import { MODES, type ModeDef } from "../modes";
 import { globalCheats } from "../modes/global";
 import { getSettings, updateSettings } from "../core/settings";
+import { allDocuments } from "../core/state";
 import { VERSION } from "../version";
 
 const ACTIVE: Record<string, ToggleHandle> = {};
@@ -140,7 +141,7 @@ function setBtnActive(el: HTMLButtonElement, active: boolean): void {
 function buildRow(def: CheatDef, api: CheatApi): HTMLElement {
   const row = rowEl();
 
-  const btn = btnEl(def.kind === "toggle" && !!ACTIVE[def.id]);
+  const btn = btnEl(def.kind === "toggle" && !!ACTIVE[def.id], def.warn);
   btn.textContent = def.label;
   btn.title = def.description ?? def.label;
   row.appendChild(btn);
@@ -507,6 +508,8 @@ export function mountPanel(api: CheatApi): PanelHandle {
     whiteSpace: "nowrap",
   });
   status.id = "cheetos-status";
+  status.style.cursor = "pointer";
+  status.title = "Click to hide/show this panel";
 
   const close = sty(document.createElement("button"), {
     background: "none",
@@ -562,7 +565,7 @@ export function mountPanel(api: CheatApi): PanelHandle {
   const setHidden = (hidden: boolean) => {
     panel.style.display = hidden ? "none" : "flex";
   };
-  const togglePanel = () => setHidden(panel.style.display === "none");
+  const togglePanel = () => setHidden(panel.style.display !== "none");
   (window as any).__cheetosShow = () => setHidden(false);
 
   let ctx: AppContext = { kind: "other", modeId: null, modeLabel: null, live: false, signature: "" };
@@ -651,12 +654,21 @@ export function mountPanel(api: CheatApi): PanelHandle {
 
   toggle.addEventListener("click", togglePanel);
   close.addEventListener("click", () => setHidden(true));
+  status.addEventListener("click", togglePanel);
+  title.style.cursor = "pointer";
+  title.title = "Click to hide/show this panel";
+  title.addEventListener("click", togglePanel);
 
+  // --- Hotkey: bind on every same-origin document (top + iframes), on
+  // window / document / body, in both capture and bubble phases, so Blooket
+  // or an iframe with focus can never swallow Ctrl+Shift+X / Ctrl+Shift+E.
+  const hotkeyTargets = new WeakSet<object>();
   let lastHotkey = 0;
   const onHotkey = (e: KeyboardEvent) => {
     const key = (e.code || e.key || "").toLowerCase();
     const isToggle = key === "keyx" || key === "x" || key === "keye" || key === "e";
     if (!(e.ctrlKey && e.shiftKey && isToggle)) return;
+    if (e.repeat) return;
     e.preventDefault();
     e.stopPropagation();
     const now = Date.now();
@@ -669,9 +681,24 @@ export function mountPanel(api: CheatApi): PanelHandle {
       "color:inherit",
     );
   };
-  window.addEventListener("keydown", onHotkey, true);
-  document.addEventListener("keydown", onHotkey, true);
-  if (document.body) document.body.addEventListener("keydown", onHotkey, true);
+  const bindHotkeys = (): void => {
+    let docs: Document[];
+    try {
+      docs = allDocuments();
+    } catch {
+      docs = [document];
+    }
+    for (const d of docs) {
+      const targets: Array<EventTarget | null> = [window, d.defaultView, d, d.body];
+      for (const t of targets) {
+        if (!t || hotkeyTargets.has(t)) continue;
+        hotkeyTargets.add(t);
+        (t as EventTarget).addEventListener("keydown", onHotkey as EventListener, true);
+        (t as EventTarget).addEventListener("keydown", onHotkey as EventListener, false);
+      }
+    }
+  };
+  bindHotkeys();
 
   document.body.appendChild(root);
   makeDraggable(panel, head);
@@ -681,6 +708,7 @@ export function mountPanel(api: CheatApi): PanelHandle {
     update,
     reattach: () => {
       if (!document.body.contains(root)) document.body.appendChild(root);
+      bindHotkeys();
     },
   };
 }

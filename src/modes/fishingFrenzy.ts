@@ -60,4 +60,33 @@ export const fishingFrenzyCheats: CheatDef[] = [
       api.setState({ lure: Math.max(0, Math.min(raw - 1, 4)) });
     },
   },
+  {
+    id: "fishing-send-distraction",
+    label: "Send Distraction",
+    group: "Fishing Frenzy",
+    kind: "action",
+    description: "Marks you safe and throws a random fish your way.",
+    run(api) {
+      const node = api.node();
+      const client = api.client();
+      if (node) node.safe = true;
+      const f = FISH[Math.floor(Math.random() * FISH.length)];
+      api.setVal(`c/${client.name}`, {
+        b: client.blook,
+        w: node?.state?.weight ?? 0,
+        f,
+        s: true,
+      });
+    },
+  },
+  {
+    id: "fishing-remove-distraction",
+    label: "Remove Distraction",
+    group: "Fishing Frenzy",
+    kind: "action",
+    description: "Clears active party effects.",
+    run(api) {
+      api.setState({ party: "" });
+    },
+  },
 ];

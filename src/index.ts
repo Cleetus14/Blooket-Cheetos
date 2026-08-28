@@ -1,7 +1,7 @@
 import { installAntiCheatPatch } from "./core/antiCheat";
 import { createApi } from "./core/api";
 import { detectContext } from "./core/context";
-import { findStateNode, stateDiagnostics } from "./core/state";
+import { debugDump, stateDiagnostics } from "./core/state";
 import { mountPanel } from "./ui/gui";
 
 export function bootstrap(): void {
@@ -14,16 +14,25 @@ export function bootstrap(): void {
   installAntiCheatPatch();
   const api = createApi();
   (window as any).cheetos = api;
+  (window as any).__cheetosDebug = () => {
+    const dump = debugDump();
+    console.log("%c[Cheetos debug]%c " + JSON.stringify(dump, null, 1), "color:#facc15", "color:inherit");
+    return dump;
+  };
 
   const panel = mountPanel(api);
   let signature = "";
+  let prevFound: boolean | null = null;
 
   const refresh = () => {
     const ctx = detectContext();
-    if (ctx.signature !== signature) {
+    const diag = stateDiagnostics();
+    const found = !!diag.found;
+
+    if (ctx.signature !== signature || found !== prevFound) {
       signature = ctx.signature;
+      prevFound = found;
       panel.update(ctx);
-      const diag = stateDiagnostics();
       console.log(
         "%c[Cheetos]%c " +
           window.location.hostname +
@@ -33,7 +42,7 @@ export function bootstrap(): void {
           (ctx.modeId ? "/" + ctx.modeId : "") +
           (ctx.live ? " (live" : " (waiting") +
           ")" +
-          (diag.found ? "" : " [state node not found]"),
+          (found ? "" : " [state node not found]"),
         "color:#facc15",
         "color:inherit",
       );
@@ -42,6 +51,9 @@ export function bootstrap(): void {
         "color:#facc15",
         "color:inherit",
       );
+      if (found && ctx.kind === "game") {
+        api.log("Game state found. Cheats ready.");
+      }
     }
   };
 

@@ -87,4 +87,144 @@ export const monsterBrawlCheats: CheatDef[] = [
       }, 300);
     },
   },
+  {
+    id: "brawl-kill-enemies",
+    label: "Kill Enemies",
+    group: "Monster Brawl",
+    kind: "action",
+    description: "Deals lethal damage to every enemy on the map.",
+    run(api) {
+      const node = api.node();
+      const bodies = node?.game?.current?.config?.sceneConfig?.physics?.world?.bodies?.entries;
+      if (!bodies) return;
+      bodies.forEach((x: any) => x?.gameObject?.receiveDamage?.(x.gameObject.hp, 1));
+    },
+  },
+  {
+    id: "brawl-next-level",
+    label: "Next Level",
+    group: "Monster Brawl",
+    kind: "action",
+    description: "Spawns the XP you need to level up.",
+    run(api) {
+      const node = api.node();
+      const scene = node?.game?.current?.config?.sceneConfig;
+      const collider = scene?.physics?.world?.colliders?._active?.find((x: any) =>
+        x.collideCallback?.toString().includes('emit("xp'),
+      );
+      if (!collider) return;
+      const player = collider.object1;
+      const xp = collider.object2;
+      xp.get().spawn(
+        player.x,
+        player.y,
+        ((e: number) =>
+          1 === e ? 1 : e < 5 ? 5 : e < 10 ? 10 : e < 20 ? 20 : e < 30 ? 30 : e < 40 ? 40 : e < 50 ? 50 : 100)(
+          node.state.level,
+        ) - node.xp,
+      );
+    },
+  },
+  {
+    id: "brawl-double-xp",
+    label: "Double Enemy XP",
+    group: "Monster Brawl",
+    kind: "action",
+    description: "Doubles the XP every enemy drops.",
+    run(api) {
+      const node = api.node();
+      const colliders =
+        node?.game?.current?.config?.sceneConfig?.physics?.world?.colliders?._active?.filter(
+          (x: any) => x.callbackContext?.toString?.()?.includes?.("dmgCd"),
+        ) ?? [];
+      for (const collider of colliders) {
+        const enemies = collider.object2;
+        if (!enemies?.classType?.prototype) continue;
+        const start = enemies.classType.prototype.start;
+        enemies.classType.prototype.start = function (this: any, ...a: any[]) {
+          start.apply(this, a);
+          this.val *= 2;
+        };
+        enemies.children?.entries?.forEach((e: any) => {
+          e.val *= 2;
+        });
+      }
+    },
+  },
+  {
+    id: "brawl-half-speed",
+    label: "Half Enemy Speed",
+    group: "Monster Brawl",
+    kind: "action",
+    description: "Halves the movement speed of every enemy.",
+    run(api) {
+      const node = api.node();
+      const colliders =
+        node?.game?.current?.config?.sceneConfig?.physics?.world?.colliders?._active?.filter(
+          (x: any) => x.callbackContext?.toString?.()?.includes?.("dmgCd"),
+        ) ?? [];
+      for (const collider of colliders) {
+        const enemies = collider.object2;
+        if (!enemies?.classType?.prototype) continue;
+        const start = enemies.classType.prototype.start;
+        enemies.classType.prototype.start = function (this: any, ...a: any[]) {
+          start.apply(this, a);
+          this.speed *= 0.5;
+        };
+        enemies.children?.entries?.forEach((e: any) => {
+          e.speed *= 0.5;
+        });
+      }
+    },
+  },
+  {
+    id: "brawl-reset-health",
+    label: "Reset Health",
+    group: "Monster Brawl",
+    kind: "action",
+    description: "Respawns you at full health.",
+    run(api) {
+      const events = api.node()?.game?.current?.events?._events;
+      events?.respawn?.fn?.();
+    },
+  },
+  {
+    id: "brawl-magnet",
+    label: "Magnet",
+    group: "Monster Brawl",
+    kind: "action",
+    description: "Pulls all XP to you for the magnet duration.",
+    run(api) {
+      const node = api.node();
+      const collider = node?.game?.current?.config?.sceneConfig?.physics?.world?.colliders?._active?.find(
+        (x: any) => x.collideCallback?.toString().includes("magnetTime"),
+      );
+      if (!collider) return;
+      collider.collideCallback(
+        { active: true },
+        { active: true, setActive() {}, setVisible() {} },
+      );
+    },
+  },
+  {
+    id: "brawl-remove-obstacles",
+    label: "Remove Obstacles",
+    group: "Monster Brawl",
+    kind: "action",
+    description: "Destroys every obstacle on the map.",
+    run(api) {
+      const node = api.node();
+      const bodies = node?.game?.current?.config?.sceneConfig?.physics?.world?.bodies?.entries;
+      if (!bodies) return;
+      bodies.forEach((body: any) => {
+        try {
+          if (body.gameObject?.frame?.texture?.key?.includes("obstacle")) {
+            body.gameObject.destroy();
+          }
+        } catch {
+          /* ignore */
+        }
+      });
+    },
+  },
 ];

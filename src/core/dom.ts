@@ -1,11 +1,62 @@
 import type { Question } from "../types";
+import { gameDocument } from "./state";
+
+// The current Blooket frontend hashes/renames its CSS classes, so the old
+// `[class*='answerContainer']` selectors may match nothing. Every helper here
+// falls back to text-based matching: find a clickable element whose text
+// content equals the answer text. All queries run against the document that
+// actually hosts the game (top page or a same-origin iframe).
+
+function doc(): Document {
+  return gameDocument();
+}
+
+function textMatches(el: Element, text: string): boolean {
+  const t = (el.textContent ?? "").trim().toLowerCase();
+  const needle = text.trim().toLowerCase();
+  return t === needle;
+}
+
+function findAnswerByText(text: string): HTMLElement | null {
+  if (!text) return null;
+  const candidates = Array.from(
+    doc().querySelectorAll("div,button,span,p,[role='button']"),
+  ) as HTMLElement[];
+  // Prefer elements that look interactive (role=button, button tags, cursor
+  // pointers) and whose text exactly matches, then fall back to any match.
+  for (const el of candidates) {
+    if (!textMatches(el, text)) continue;
+    const style = getComputedStyle(el);
+    if (
+      el.tagName === "BUTTON" ||
+      el.getAttribute("role") === "button" ||
+      style.cursor === "pointer"
+    ) {
+      return el;
+    }
+  }
+  for (const el of candidates) {
+    if (textMatches(el, text)) return el;
+  }
+  return null;
+}
 
 export function clickAnswer(question: Question, index: number): boolean {
-  const nodes = document.querySelectorAll("[class*='answerContainer']");
+  const answer = question.answers[index];
+  // Primary path: the old selector still works on older Blooket builds.
+  const nodes = doc().querySelectorAll("[class*='answerContainer']");
   const el = nodes[index] as HTMLElement | undefined;
-  if (!el) return false;
-  el.click();
-  return true;
+  if (el) {
+    el.click();
+    return true;
+  }
+  // Fallback: match by text content.
+  const byText = findAnswerByText(answer);
+  if (byText) {
+    byText.click();
+    return true;
+  }
+  return false;
 }
 
 export function randomWrongIndex(question: Question): number {
@@ -18,19 +69,39 @@ export function randomWrongIndex(question: Question): number {
 }
 
 export function clickCorrect(question: Question): boolean {
-  const nodes = document.querySelectorAll("[class*='answerContainer']");
+  const nodes = doc().querySelectorAll("[class*='answerContainer']");
   const idx = question.answers.findIndex(
     (a) => question.correctAnswers.indexOf(a) !== -1,
   );
   const el = nodes[idx] as HTMLElement | undefined;
-  if (!el) return false;
-  el.click();
-  return true;
+  if (el) {
+    el.click();
+    return true;
+  }
+  for (const answer of question.correctAnswers) {
+    const byText = findAnswerByText(answer);
+    if (byText) {
+      byText.click();
+      return true;
+    }
+  }
+  return false;
 }
 
-export function submitTyping(answer: string): boolean {
-  const wrapper: any = document.querySelector("[class*='typingAnswerWrapper']");
-  if (!wrapper) return false;
+function typingInput(): HTMLInputElement | null {
+  const wrapper: any = doc().querySelector("[class*='typingAnswerWrapper']");
+  const input = wrapper?.querySelector("input, textarea");
+  if (input) return input as HTMLInputElement;
+  // Fallback: the first visible text input on the page (new frontend).
+  const inputs = Array.from(doc().querySelectorAll("input[type='text'], input:not([type]), textarea")) as HTMLInputElement[];
+  for (const el of inputs) {
+    const r = el.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0) return el;
+  }
+  return null;
+}
+
+function typingStateNode(wrapper: any): any {
   // React 16/17 route via _owner, React 18 route via the fiber tree.
   let node: any = (Object.values(wrapper) as any[])[1]?.children?._owner?.stateNode;
   if (!node) {
@@ -54,21 +125,53 @@ export function submitTyping(answer: string): boolean {
       if (node) break;
     }
   }
-  if (typeof node?.sendAnswer === "function") {
-    node.sendAnswer(answer);
+  return node;
+}
+
+export function submitTyping(answer: string): boolean {
+  const wrapper: any = doc().querySelector("[class*='typingAnswerWrapper']");
+  if (wrapper) {
+    const node = typingStateNode(wrapper);
+    if (typeof node?.sendAnswer === "function") {
+      node.sendAnswer(answer);
+      return true;
+    }
+  }
+  // Text fallback: type into the visible input and submit with Enter.
+  const input = typingInput();
+  if (input) {
+    const proto =
+      input.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+    setter?.call(input, answer);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", code: "Enter", bubbles: true }));
     return true;
   }
   return false;
 }
 
 export function advanceFeedback(): boolean {
-  const el = document.querySelector(
+  const el = doc().querySelector(
     "[class*='feedback'], [id*='feedback']",
   ) as HTMLElement | null;
   const child: any = el?.firstChild;
   if (child && typeof child.click === "function") {
     child.click();
     return true;
+  }
+  // Fallback: click a Continue / Next / arrow button by text.
+  const labels = ["continue", "next", "ok", "got it", "let's go", "onward"];
+  const buttons = Array.from(
+    doc().querySelectorAll("button, div[role='button'], [class*='button']"),
+  ) as HTMLElement[];
+  for (const b of buttons) {
+    const t = (b.textContent ?? "").trim().toLowerCase();
+    if (labels.some((l) => t === l || t.startsWith(l + " "))) {
+      b.click();
+      return true;
+    }
   }
   return false;
 }

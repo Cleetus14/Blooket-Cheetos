@@ -41,6 +41,8 @@ export interface CheatDef {
   description?: string;
   group: string;
   kind: CheatKind;
+  /** Renders the button red as a "destructive / affects others" warning. */
+  warn?: boolean;
   inputs?: CheatInput[];
   run(api: CheatApi, args: Record<string, string>): ToggleHandle | void;
 }

@@ -122,8 +122,117 @@ export const globalCheats: CheatDef[] = [
             if (q && Array.isArray(q.answers)) q.correctAnswers = [...q.answers];
           }
         }
+        // Current question may live in hook state or client props on the new
+        // frontend; patch it directly so Auto Answer always sees it correct.
+        const cur = node.state?.question ?? node.props?.client?.question ?? node.props?.question;
+        if (cur && Array.isArray(cur.answers)) cur.correctAnswers = [...cur.answers];
         node.forceUpdate?.();
       }, 250);
+    },
+  },
+  {
+    id: "global-change-blook",
+    label: "Change Blook In Game",
+    group: "Global",
+    kind: "action",
+    inputs: [{ name: "blook", label: "Blook name", type: "text", defaultValue: "Rainbow Astronaut" }],
+    description: "Switches the blook you display in a live game (case sensitive).",
+    run(api, args) {
+      const blook = (args.blook ?? "").trim();
+      if (!blook) return;
+      const client = api.client();
+      if (!client.name) {
+        api.log("Not in a game yet.");
+        return;
+      }
+      api.setVal(`c/${client.name}/b`, blook);
+      client.blook = blook;
+      api.log("Blook changed to " + blook + ".");
+    },
+  },
+  {
+    id: "global-remove-random-name",
+    label: "Remove Random Name",
+    group: "Global",
+    kind: "action",
+    description: "Removes your random name so your account name shows.",
+    run(api) {
+      api.setState({ isRandom: false, client: { name: "" } });
+    },
+  },
+  {
+    id: "global-use-any-blook",
+    label: "Use Any Blook",
+    group: "Global",
+    kind: "action",
+    description: "Unlocks every blook on the lobby or /blooks page (display only).",
+    run(api) {
+      const path = window.location.pathname;
+      const lobby = path.startsWith("/play/lobby");
+      const blooksPage = path.startsWith("/blooks");
+      if (!lobby && !blooksPage) {
+        api.log("Run this on the lobby or the /blooks page.");
+        return;
+      }
+      const node = api.node();
+      if (!node) return;
+      const key = lobby ? "keys" : "entries";
+      const old = (Object as any)[key];
+      (Object as any)[key] = function (obj: any) {
+        if (!obj?.Chick) return old.call(this, obj);
+        const blooks = obj;
+        (Object as any)[key] = old;
+        if (lobby) {
+          node.setState({ unlocks: Object.keys(blooks) });
+        } else {
+          node.setState({ blookData: Object.fromEntries(Object.keys(blooks).map((b: string) => [b, 1])) });
+        }
+        return old.call(this, obj);
+      };
+      try {
+        node.render?.() ?? node.forceUpdate?.();
+      } catch {
+        /* ignore */
+      }
+      api.log("All blooks unlocked. Choose one on the lobby.");
+    },
+  },
+  {
+    id: "global-sell-dupes",
+    label: "Sell Duplicate Blooks",
+    group: "Global",
+    kind: "action",
+    description: "Sells every duplicate blook you own on the /blooks page (keeps legendaries).",
+    run(api) {
+      if (!window.location.pathname.startsWith("/blooks")) {
+        api.log("Run this on the /blooks page.");
+        return;
+      }
+      const node = api.node();
+      if (!node) return;
+      const blookData = node.state?.blookData ?? {};
+      const toSell: Record<string, number> = {};
+      for (const blook of Object.keys(blookData)) {
+        if (blookData[blook] > 1) toSell[blook] = blookData[blook] - 1;
+      }
+      const total = Object.values(toSell).reduce((a, b) => a + b, 0);
+      if (!total) {
+        api.log("No duplicates to sell.");
+        return;
+      }
+      const keys = Object.keys(toSell);
+      let sold = 0;
+      keys.forEach((blook, i) => {
+        setTimeout(() => {
+          try {
+            node.sellBlook(blook, toSell[blook]);
+          } catch {
+            /* ignore */
+          }
+          sold += toSell[blook];
+          if (i === keys.length - 1) api.log("Sold " + sold + " duplicate blooks.");
+        }, i * 250);
+      });
     },
   },
   {
@@ -202,6 +311,41 @@ export const globalCheats: CheatDef[] = [
           api.log("Add Tokens failed: " + (err as Error).message);
         }
       })();
+    },
+  },
+  {
+    id: "global-kick-player",
+    label: "Kick Player",
+    group: "Global",
+    kind: "action",
+    warn: true,
+    inputs: [{ name: "player", label: "Player", type: "text" }],
+    description: "Removes a player from the current match by deleting their game node (experimental, works in most modes).",
+    run(api, args) {
+      const target = (args.player ?? "").trim();
+      if (!target) {
+        api.log("Enter a player name.");
+        return;
+      }
+      if (!api.node()) {
+        api.log("Game state not found yet. Wait for the game to load, then run again.");
+        return;
+      }
+      api.getVal("c", (players: any) => {
+        if (!players) {
+          api.log("No player list found - are you in a game?");
+          return;
+        }
+        const entry = Object.entries(players).find(
+          (x) => (x[0] as string).toLowerCase() === target.toLowerCase(),
+        );
+        if (!entry) {
+          api.log("Player not found: " + target);
+          return;
+        }
+        api.setVal(`c/${entry[0]}`, null);
+        api.log("Kicked " + entry[0] + " from the match.");
+      });
     },
   },
 ];

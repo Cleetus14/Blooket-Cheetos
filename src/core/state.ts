@@ -1,33 +1,114 @@
 type AnyNode = any;
 
+// ---------------------------------------------------------------------------
+// Blooket state detection.
+//
+// Old Blooket builds mounted the game as a class component reachable through
+// `_owner.stateNode` (the classic getStateNode trick). The current build is a
+// React 18/19 app where the game controller can live in:
+//   - a fiber's memoizedProps (liveGameController / client),
+//   - a context provider value (memoizedProps.value),
+//   - a function component hook state (useState/useReducer),
+//   - a class instance (stateNode), or
+//   - any plain object reachable from window (module-scope globals).
+// We therefore collect every reachable object and score each one for
+// game-shaped fields, then expose a unified node proxy that forwards
+// setState / setVal / getVal / question / state / props to the real objects.
+// ---------------------------------------------------------------------------
+
 function isCheetosEl(el: HTMLElement | null): boolean {
-  return !!el && (el.id === "cheetos-root" || el.id === "cheetos-panel" || el.id === "cheetos-toggle");
+  return (
+    !!el &&
+    (el.id === "cheetos-root" || el.id === "cheetos-panel" || el.id === "cheetos-toggle")
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Documents (top page + same-origin iframes)
+// ---------------------------------------------------------------------------
+
+export function allDocuments(): Document[] {
+  const docs: Document[] = [document];
+  try {
+    for (const frame of Array.from(document.querySelectorAll("iframe"))) {
+      const doc = (frame as HTMLIFrameElement).contentDocument;
+      if (doc && doc !== document && !docs.includes(doc)) docs.push(doc);
+    }
+  } catch {
+    /* cross-origin frame */
+  }
+  return docs;
+}
+
+let docCache: { doc: Document; at: number } | null = null;
+
+// Returns the document that actually hosts the game (top page or a
+// same-origin iframe). DOM-based helpers must click inside this document.
+export function gameDocument(): Document {
+  const now = Date.now();
+  if (docCache && now - docCache.at < 400) return docCache.doc;
+  let best: Document = document;
+  let bestScore = -1;
+  for (const doc of allDocuments()) {
+    let score = 0;
+    const markers = [
+      "[class*='answer']",
+      "[class*='question']",
+      "[class*='choice']",
+      "[class*='feedback']",
+      "[class*='gold']",
+      "[class*='crypto']",
+      "canvas",
+      "input[type=text]",
+      "input[type=number]",
+    ];
+    for (const m of markers) {
+      try {
+        score += doc.querySelectorAll(m).length;
+      } catch {
+        /* ignore */
+      }
+    }
+    if (doc !== document) score += 10;
+    if (score > bestScore) {
+      bestScore = score;
+      best = doc;
+    }
+  }
+  docCache = { doc: best, at: now };
+  return best;
 }
 
 // ---------------------------------------------------------------------------
 // React internals
 // ---------------------------------------------------------------------------
 
-// React 16/17/18 attach enumerable keys like `__reactFiber$<hash>`,
-// `__reactProps$<hash>` and `__reactContainer$<hash>` onto the rendered DOM
-// node. `Object.values(el)[1]` is the props object for the root container in
-// the order React installs them, which is what 05konz's getStateNode relies on.
-// We expose both the named-key lookup and that legacy ordered lookup so we work
-// regardless of which exact build Blooket is currently serving.
-function reactKeys(el: HTMLElement, prefix: string): string[] {
-  const out: string[] = [];
+const FIBER_PREFIXES = ["__reactFiber$", "__reactInternalInstance$", "__reactContainer$"];
+const PROPS_PREFIXES = ["__reactProps$"];
+
+function reactKeyedValues(el: HTMLElement, prefixes: string[]): AnyNode[] {
+  const out: AnyNode[] = [];
   for (const key of Object.keys(el)) {
-    if (key.startsWith(prefix)) out.push(key);
+    for (const prefix of prefixes) {
+      if (key.startsWith(prefix)) {
+        const v = (el as AnyNode)[key];
+        if (v) out.push(v);
+      }
+    }
   }
   return out;
 }
 
 function propsOf(el: HTMLElement): AnyNode | null {
-  for (const key of reactKeys(el, "__reactProps$")) {
-    const props = (el as AnyNode)[key];
-    if (props) return props;
+  for (const key of Object.keys(el)) {
+    for (const prefix of PROPS_PREFIXES) {
+      if (key.startsWith(prefix)) {
+        const props = (el as AnyNode)[key];
+        if (props) return props;
+      }
+    }
   }
-  // Legacy fallback used by the reference getStateNode.
+  // Legacy ordered lookup used by the reference getStateNode.
   const values = Object.values(el) as AnyNode[];
   return values[1] ?? null;
 }
@@ -39,8 +120,6 @@ function ownerStateNodeOf(el: HTMLElement): AnyNode | null {
 
 // Exact port of the reference walk: descend `body>div > div > ...` and return
 // the first React component instance reachable through `_owner.stateNode`.
-// React 18+ removed `_owner`, so this is kept as the primary fast path for
-// older Blooket builds and the fiber walk below is the fallback.
 function referenceWalk(start: HTMLElement): AnyNode | null {
   let current: HTMLElement | null = start;
   let depth = 0;
@@ -55,137 +134,635 @@ function referenceWalk(start: HTMLElement): AnyNode | null {
   return null;
 }
 
-function fiberOf(el: HTMLElement): AnyNode[] {
+// ---------------------------------------------------------------------------
+// DOM + fiber collection
+// ---------------------------------------------------------------------------
+
+const SCAN_LIMIT = 100000;
+interface DomScan {
+  fibers: AnyNode[];
+  propsObjs: AnyNode[];
+  seenNodes: AnyNode[];
+  at: number;
+}
+let scanCache: DomScan | null = null;
+
+function allScannable(doc: Document): HTMLElement[] {
+  const els: HTMLElement[] = [];
+  for (const el of Array.from(doc.body?.children ?? [])) {
+    if (!isCheetosEl(el as HTMLElement)) els.push(el as HTMLElement);
+  }
+  const all = doc.querySelectorAll("body *");
+  const cap = Math.min(all.length, SCAN_LIMIT);
+  for (let i = 0; i < cap; i++) {
+    const el = all[i] as HTMLElement;
+    if (!isCheetosEl(el)) els.push(el);
+  }
+  return els;
+}
+
+function collectDom(): DomScan {
+  const now = Date.now();
+  if (scanCache && now - scanCache.at < 600) return scanCache;
+
+  const fibers: AnyNode[] = [];
+  const propsObjs: AnyNode[] = [];
+  const seenNodes: AnyNode[] = [];
+  const seenSet = new Set<AnyNode>();
+  for (const doc of allDocuments()) {
+    const els = allScannable(doc);
+    for (const el of els) {
+      for (const fiber of reactKeyedValues(el, FIBER_PREFIXES)) {
+        if (!fibers.includes(fiber)) fibers.push(fiber);
+      }
+      for (const props of reactKeyedValues(el, PROPS_PREFIXES)) {
+        if (!propsObjs.includes(props)) propsObjs.push(props);
+      }
+    }
+    // Legacy `_owner` path: scan every element for a direct stateNode.
+    for (const el of els) {
+      const sn = ownerStateNodeOf(el);
+      if (sn && !seenSet.has(sn)) {
+        seenSet.add(sn);
+        seenNodes.push(sn);
+      }
+    }
+  }
+
+  scanCache = { fibers, propsObjs, seenNodes, at: now };
+  return scanCache;
+}
+
+function fibersFromDevToolsHook(): AnyNode[] {
+  const hook = (window as AnyNode).__REACT_DEVTOOLS_GLOBAL_HOOK__;
+  if (!hook?.renderers) return [];
   const out: AnyNode[] = [];
-  for (const key of Object.keys(el)) {
-    if (
-      key.startsWith("__reactFiber$") ||
-      key.startsWith("__reactInternalInstance$") ||
-      key.startsWith("__reactContainer$")
-    ) {
-      const fiber = (el as AnyNode)[key];
-      if (fiber) out.push(fiber);
+  for (const [id, renderer] of hook.renderers.entries()) {
+    try {
+      const roots = renderer.getFiberRoots ? renderer.getFiberRoots(id) : [];
+      for (const root of roots) if (root) out.push(root);
+    } catch {
+      /* ignore */
     }
   }
   return out;
 }
 
-// Walks every React fiber tree reachable from the candidate roots and returns
-// every class-component instance (fiber.stateNode with a setState method).
-// React 18 function components have fiber.stateNode === null, so they are not
-// matched here; Blooket's game controller is still a class component.
-function collectClassInstances(roots: HTMLElement[]): AnyNode[] {
-  const found: AnyNode[] = [];
+function walkFiberTree(roots: AnyNode[]): AnyNode[] {
   const seen = new Set<AnyNode>();
   const stack: AnyNode[] = [];
-  for (const el of roots) {
-    for (const fiber of fiberOf(el)) stack.push(fiber);
-  }
+  for (const r of roots) stack.push(r);
   while (stack.length) {
     const fiber = stack.pop();
     if (!fiber || seen.has(fiber)) continue;
     seen.add(fiber);
-    const stateNode = fiber.stateNode;
-    if (stateNode && stateNode !== fiber && typeof stateNode.setState === "function") {
-      found.push(stateNode);
-    }
     if (fiber.child) stack.push(fiber.child);
     if (fiber.sibling) stack.push(fiber.sibling);
+    if (fiber.return) stack.push(fiber.return);
+    if (fiber.alternate) stack.push(fiber.alternate);
   }
-  return found;
+  return Array.from(seen);
 }
 
-function candidateRoots(): HTMLElement[] {
-  const roots: HTMLElement[] = [];
-  // Blooket mounts at the first direct child div of body; that is what the
-  // reference walk uses, so put body>div first.
-  for (const el of Array.from(document.querySelectorAll("body>div"))) {
-    const htmlEl = el as HTMLElement;
-    if (!isCheetosEl(htmlEl) && !roots.includes(htmlEl)) roots.push(htmlEl);
-  }
-  for (const id of ["root", "app", "game"]) {
-    const el = document.getElementById(id);
-    if (el && !roots.includes(el)) roots.push(el);
-  }
-  return roots;
+// ---------------------------------------------------------------------------
+// Object-graph hunt
+// ---------------------------------------------------------------------------
+
+const GAME_STATE_KEYS = [
+  "gold", "gold2", "crypto", "crypto2", "stage", "phase", "question", "choices",
+  "cash", "tokens", "fossils", "toys", "toysPerQ", "guestScore", "round", "level",
+  "myHealth", "myLife", "materials", "people", "happiness", "fossilMult",
+  "numDefense", "numBlooks", "lure", "blooks", "towers", "weight", "password",
+  "correctPassword", "hack", "safe", "party",
+];
+
+interface Hunt {
+  controller: AnyNode | null; // has setVal / getDatabaseVal
+  client: AnyNode | null; // { name, type/question/gold ... }
+  question: AnyNode | null; // { answers, correctAnswers ... }
+  stateObj: AnyNode | null; // game-state shaped object
+  classNode: AnyNode | null; // class instance with setState + state
+  best: AnyNode | null;
+  bestScore: number;
+  stateFiber: AnyNode | null; // fiber whose hook state holds game state
+  visited: number;
 }
 
-// Score a candidate by how strongly it looks like the live game controller
-// rather than an unrelated React class component. Higher is better.
-function scoreNode(node: AnyNode): number {
-  if (!node) return -1;
+function isObj(v: unknown): v is Record<string, any> {
+  return !!v && typeof v === "object";
+}
+
+function hasGameValue(o: AnyNode): boolean {
+  return (
+    o.gold !== undefined ||
+    o.crypto !== undefined ||
+    o.cash !== undefined ||
+    o.fossils !== undefined ||
+    o.toys !== undefined ||
+    o.tokens !== undefined ||
+    o.guestScore !== undefined ||
+    o.myHealth !== undefined
+  );
+}
+
+function consider(o: AnyNode, hunt: Hunt): void {
+  if (!isObj(o)) return;
   let score = 0;
-  const props = node.props ?? {};
-  const state = node.state ?? {};
-  if (props.liveGameController) score += 1000;
-  if (props.client) score += 500;
-  if (Array.isArray(node.freeQuestions)) score += 300;
-  if (Array.isArray(node.questions)) score += 300;
-  if (Array.isArray(props.client?.questions)) score += 200;
-  if (state.question) score += 150;
-  if (state.gold !== undefined || state.gold2 !== undefined) score += 100;
-  if (Array.isArray(state.choices)) score += 100;
-  if (state.stage || state.phase) score += 50;
-  if (typeof node.setState === "function") score += 1;
-  return score;
+
+  // The Firebase controller: the single most important object.
+  const ctrl =
+    typeof o.setVal === "function" &&
+    (typeof o.getDatabaseVal === "function" ||
+      typeof o.getDatabaseRef === "function" ||
+      typeof o.getVal === "function");
+  if (ctrl) {
+    score += 100000;
+    if (!hunt.controller) hunt.controller = o;
+  } else if (typeof o.setVal === "function") {
+    score += 20000;
+  }
+
+  // Wrapper object carrying client / liveGameController (fiber props, context).
+  if (isObj(o.client)) {
+    score += 30000;
+    const c = o.client;
+    if (typeof c.name === "string") score += 20000;
+    if (typeof c.type === "string") score += 5000;
+    if (isObj(c.question)) score += 10000;
+    if (!hunt.client && typeof c.name === "string") hunt.client = c;
+  }
+  if (isObj(o.liveGameController)) {
+    score += 40000;
+    if (isObj(o.liveGameController) && !hunt.controller) {
+      // liveGameController itself may be the controller
+      if (
+        typeof o.liveGameController.setVal === "function" &&
+        (typeof o.liveGameController.getDatabaseVal === "function" ||
+          typeof o.liveGameController.getDatabaseRef === "function")
+      ) {
+        hunt.controller = o.liveGameController;
+      }
+    }
+  }
+
+  // A client object itself ({ name, type/question/gold/blook ... }).
+  if (
+    typeof o.name === "string" &&
+    (typeof o.type === "string" ||
+      isObj(o.question) ||
+      o.gold !== undefined ||
+      o.crypto !== undefined ||
+      o.blook !== undefined)
+  ) {
+    score += 30000;
+    if (!hunt.client) hunt.client = o;
+  }
+
+  // A question object.
+  if (isObj(o.question) && Array.isArray(o.question.answers)) {
+    score += 30000;
+    if (Array.isArray(o.question.correctAnswers)) score += 10000;
+    if (!hunt.question) hunt.question = o.question;
+  }
+  if (Array.isArray(o.answers) && Array.isArray(o.correctAnswers)) {
+    score += 20000;
+    if (!hunt.question && isObj(o)) hunt.question = o;
+  }
+
+  // Game-state shaped object.
+  if (hasGameValue(o) && (o.stage !== undefined || o.phase !== undefined || isObj(o.client) || Array.isArray(o.choices) || isObj(o.question))) {
+    score += 25000;
+  }
+
+  if (Array.isArray(o.questions) || Array.isArray(o.freeQuestions)) score += 10000;
+
+  // Class component instance.
+  if (typeof o.setState === "function" && isObj(o.state)) {
+    score += 5000;
+    if (isObj(o.props) && (isObj(o.props.client) || isObj(o.props.liveGameController))) {
+      score += 30000;
+    }
+    if (!hunt.classNode) hunt.classNode = o;
+  }
+
+  if (
+    !hunt.stateObj &&
+    (hasGameValue(o) ||
+      o.stage !== undefined ||
+      o.phase !== undefined ||
+      Array.isArray(o.choices) ||
+      isObj(o.question))
+  ) {
+    hunt.stateObj = o;
+  }
+
+  if (score > hunt.bestScore) {
+    hunt.bestScore = score;
+    hunt.best = o;
+  }
+}
+
+function enumerableLeaves(o: AnyNode): AnyNode[] {
+  const out: AnyNode[] = [];
+  if (typeof Element !== "undefined" && o instanceof Element) {
+    // DOM nodes: only React internal keys carry useful state.
+    for (const k of Object.keys(o)) {
+      if (!k.startsWith("__react")) continue;
+      try {
+        const v = (o as AnyNode)[k];
+        if (isObj(v)) out.push(v);
+      } catch {
+        /* ignore */
+      }
+    }
+    return out;
+  }
+  if (Array.isArray(o)) {
+    const n = Math.min(o.length, 2000);
+    for (let i = 0; i < n; i++) {
+      try {
+        const v = o[i];
+        if (isObj(v)) out.push(v);
+      } catch {
+        /* ignore */
+      }
+    }
+    return out;
+  }
+  for (const k of Object.keys(o)) {
+    try {
+      const v = o[k];
+      if (isObj(v)) out.push(v);
+    } catch {
+      /* ignore */
+    }
+  }
+  return out;
+}
+
+const BFS_BUDGET = 150000;
+const BFS_DEPTH = 5;
+
+function runHunt(seeds: AnyNode[]): Hunt {
+  const hunt: Hunt = {
+    controller: null,
+    client: null,
+    question: null,
+    stateObj: null,
+    classNode: null,
+    best: null,
+    bestScore: -1,
+    stateFiber: null,
+    visited: 0,
+  };
+  const seen = new Set<AnyNode>();
+  const stack: { o: AnyNode; d: number }[] = [];
+  for (const s of seeds) if (isObj(s)) stack.push({ o: s, d: 0 });
+  while (stack.length && hunt.visited < BFS_BUDGET) {
+    const { o, d } = stack.pop()!;
+    if (seen.has(o)) continue;
+    seen.add(o);
+    hunt.visited++;
+    consider(o, hunt);
+    if (d >= BFS_DEPTH) continue;
+    for (const leaf of enumerableLeaves(o)) {
+      if (!seen.has(leaf)) stack.push({ o: leaf, d: d + 1 });
+    }
+  }
+  return hunt;
+}
+
+function hookChainValues(fiber: AnyNode): AnyNode[] {
+  const out: AnyNode[] = [];
+  let hook: AnyNode = fiber?.memoizedState;
+  let guard = 0;
+  while (hook && guard++ < 300) {
+    let v = hook.memoizedState;
+    if (Array.isArray(v)) v = v[0]; // useReducer state
+    if (isObj(v)) out.push(v);
+    hook = hook.next;
+  }
+  return out;
+}
+
+function huntSeeds(): AnyNode[] {
+  const seeds: AnyNode[] = [window, document];
+  for (const doc of allDocuments()) {
+    seeds.push(doc);
+    const win = (doc as AnyNode).defaultView;
+    if (win && win !== window) seeds.push(win);
+  }
+
+  const dom = collectDom();
+  const fibers = walkFiberTree(dom.fibers.concat(fibersFromDevToolsHook()));
+
+  for (const f of fibers) {
+    seeds.push(f);
+    if (isObj(f.memoizedProps)) {
+      seeds.push(f.memoizedProps);
+      if (isObj(f.memoizedProps.value)) seeds.push(f.memoizedProps.value); // context value
+      if (isObj(f.memoizedProps.client)) seeds.push(f.memoizedProps.client);
+      if (isObj(f.memoizedProps.liveGameController)) seeds.push(f.memoizedProps.liveGameController);
+    }
+    for (const v of hookChainValues(f)) seeds.push(v);
+    const ctx = f.dependencies?.firstContext?.memoizedValue;
+    if (isObj(ctx)) seeds.push(ctx);
+    if (isObj(f.stateNode) && typeof f.stateNode.setState === "function") seeds.push(f.stateNode);
+  }
+  for (const p of dom.propsObjs) seeds.push(p);
+  for (const sn of dom.seenNodes) seeds.push(sn);
+
+  return seeds;
+}
+
+function fiberForHookState(fibers: AnyNode[], stateObj: AnyNode): AnyNode | null {
+  for (const f of fibers) {
+    for (const v of hookChainValues(f)) {
+      if (v === stateObj) return f;
+    }
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Unified node
+// ---------------------------------------------------------------------------
+
+function buildNode(hunt: Hunt, fibers: AnyNode[]): AnyNode | null {
+  if (hunt.bestScore < 0 && !hunt.client && !hunt.controller && !hunt.question) return null;
+
+  if (!hunt.stateFiber && hunt.stateObj) {
+    hunt.stateFiber = fiberForHookState(fibers, hunt.stateObj);
+  }
+
+  const source: AnyNode =
+    hunt.classNode ||
+    hunt.best ||
+    (hunt.client ? { client: hunt.client } : {}) ||
+    {};
+
+  const stateObj = (): AnyNode => {
+    const merged: AnyNode = {};
+    const parts = [
+      hunt.client,
+      hunt.classNode?.state,
+      hunt.stateObj,
+      hunt.question,
+    ];
+    for (const p of parts) {
+      if (isObj(p)) Object.assign(merged, p);
+    }
+    return merged;
+  };
+
+  const setVal = (path: string, val: unknown) => {
+    const c = hunt.controller;
+    if (!c || typeof c.setVal !== "function") return;
+    try {
+      if (c.setVal.length >= 2) c.setVal(path, val);
+      else c.setVal({ path, val });
+    } catch {
+      try {
+        c.setVal({ path, val });
+      } catch {
+        /* ignore */
+      }
+    }
+  };
+
+  const getVal = (path: string, cb: (val: any) => void) => {
+    const c = hunt.controller;
+    if (!c) return;
+    try {
+      const fn = c.getDatabaseVal ?? c.getVal;
+      if (typeof fn !== "function") return;
+      const r = fn.call(c, path, cb);
+      if (r && typeof r.then === "function") r.then(cb).catch(() => {});
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const setState = (patch: AnyNode) => {
+    if (!patch || typeof patch !== "object") return;
+    if (hunt.classNode && typeof hunt.classNode.setState === "function") {
+      try {
+        hunt.classNode.setState(patch);
+        return;
+      } catch {
+        /* ignore */
+      }
+    }
+    bestEffortSetState(hunt.stateFiber ?? huntStateFiberFallback(fibers, patch), patch, fibers);
+  };
+
+  const forceUpdate = () => {
+    try {
+      hunt.classNode?.forceUpdate?.();
+    } catch {
+      /* ignore */
+    }
+    try {
+      let f = hunt.stateFiber;
+      while (f) {
+        const sn = f.stateNode;
+        if (sn && typeof sn.forceUpdate === "function") {
+          sn.forceUpdate();
+          return;
+        }
+        f = f.return;
+      }
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const propsObj: AnyNode = {
+    client: hunt.client ?? {},
+    liveGameController: hunt.controller ?? {},
+    question: hunt.question ?? null,
+  };
+
+  const questionOf = (): AnyNode =>
+    hunt.question ?? hunt.client?.question ?? stateObj().question ?? null;
+
+  return new Proxy(source, {
+    get(t, prop: string, recv) {
+      if (prop === "props") return propsObj;
+      if (prop === "state") return stateObj();
+      if (prop === "setState") return setState;
+      if (prop === "setVal") return setVal;
+      if (prop === "getVal") return getVal;
+      if (prop === "getDatabaseVal") return (path: string, cb: any) => getVal(path, cb);
+      if (prop === "forceUpdate") return forceUpdate;
+      if (prop === "question") return questionOf;
+      if (prop in t) return Reflect.get(t, prop, recv);
+      if (hunt.client && prop in hunt.client) return hunt.client[prop];
+      const s = stateObj();
+      if (prop in s) return s[prop];
+      if (hunt.controller && prop in hunt.controller) return hunt.controller[prop];
+      return undefined;
+    },
+    set(t, prop: string, value) {
+      if (
+        prop === "props" ||
+        prop === "state" ||
+        prop === "setState" ||
+        prop === "setVal" ||
+        prop === "getVal" ||
+        prop === "forceUpdate" ||
+        prop === "question"
+      ) {
+        return true;
+      }
+      if (prop in t) {
+        t[prop] = value;
+        return true;
+      }
+      if (isObj(hunt.stateObj)) hunt.stateObj[prop] = value;
+      if (isObj(hunt.client)) hunt.client[prop] = value;
+      return true;
+    },
+  });
+}
+
+function huntStateFiberFallback(fibers: AnyNode[], patch: AnyNode): AnyNode | null {
+  const keys = Object.keys(patch);
+  if (!keys.length) return null;
+  for (const f of fibers) {
+    for (const v of hookChainValues(f)) {
+      if (keys.some((k) => k in v)) return f;
+    }
+  }
+  return null;
+}
+
+// React dispatches are stable per fiber: hook.queue.dispatch is the same
+// function React calls internally, so calling it with a merged object is the
+// function-component equivalent of setState.
+function bestEffortSetState(fiber: AnyNode | null, patch: AnyNode, fibers: AnyNode[]): void {
+  try {
+    const keys = Object.keys(patch);
+    if (!keys.length) return;
+
+    const tryFiber = (f: AnyNode): boolean => {
+      let hook: AnyNode = f.memoizedState;
+      let best: AnyNode | null = null;
+      let bestScore = 0;
+      while (hook) {
+        let value = hook.memoizedState;
+        if (Array.isArray(value)) value = value[0];
+        if (value && typeof value === "object") {
+          const score = keys.filter((k) => k in value).length;
+          if (score > bestScore) {
+            bestScore = score;
+            best = hook;
+          }
+        }
+        hook = hook.next;
+      }
+      if (best?.queue?.dispatch && bestScore > 0) {
+        const current = best.memoizedState;
+        if (Array.isArray(current)) {
+          best.queue.dispatch([Object.assign({}, current[0], patch), ...current.slice(1)]);
+        } else {
+          best.queue.dispatch(Object.assign({}, current, patch));
+        }
+        return true;
+      }
+      return false;
+    };
+
+    if (fiber && tryFiber(fiber)) return;
+    for (const f of fibers) {
+      if (tryFiber(f)) return;
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+let nodeCache: { node: AnyNode | null; at: number } | null = null;
+let huntCache: { hunt: Hunt; fibers: AnyNode[]; at: number } | null = null;
+
+// Found hunts are reusable for a short while (the game tree doesn't change
+// every frame), but empty hunts must expire fast so detection retries once
+// the game mounts. Otherwise running the bookmark in the lobby would cache
+// "nothing found" and keep reporting "waiting for the game to load" even
+// after a question is on screen.
+const HUNT_CACHE_HIT_MS = 700;
+const HUNT_CACHE_MISS_MS = 350;
+
+function computeHunt(): { hunt: Hunt; fibers: AnyNode[] } {
+  const now = Date.now();
+  if (huntCache) {
+    const ttl = huntCache.hunt.bestScore < 0 ? HUNT_CACHE_MISS_MS : HUNT_CACHE_HIT_MS;
+    if (now - huntCache.at < ttl) {
+      return { hunt: huntCache.hunt, fibers: huntCache.fibers };
+    }
+  }
+  const fibers = walkFiberTree(collectDom().fibers.concat(fibersFromDevToolsHook()));
+  const hunt = runHunt(huntSeeds());
+  const found =
+    hunt.bestScore >= 0 || !!hunt.client || !!hunt.controller || !!hunt.question;
+  if (found) huntCache = { hunt, fibers, at: now };
+  return { hunt, fibers };
 }
 
 function computeStateNode(): AnyNode | null {
-  const roots = candidateRoots();
-
-  // 1) Reference-exact `_owner.stateNode` candidates.
-  const candidates: AnyNode[] = [];
-  for (const root of roots) {
-    const node = referenceWalk(root);
-    if (node && !candidates.includes(node)) candidates.push(node);
-  }
-
-  // 2) Fiber-tree class-component candidates (React 18+ where _owner is gone).
-  for (const inst of collectClassInstances(roots)) {
-    if (inst && !candidates.includes(inst)) candidates.push(inst);
-  }
-
-  if (!candidates.length) return null;
-
-  let best = candidates[0];
-  let bestScore = -1;
-  for (const candidate of candidates) {
-    const score = scoreNode(candidate);
-    if (score > bestScore) {
-      bestScore = score;
-      best = candidate;
-    }
-  }
-  return best;
+  const { hunt, fibers } = computeHunt();
+  if (hunt.bestScore < 0 && !hunt.client && !hunt.controller && !hunt.question) return null;
+  return buildNode(hunt, fibers);
 }
-
-let cache: { node: AnyNode | null; at: number } | null = null;
 
 export function findStateNode(): AnyNode | null {
   const now = Date.now();
-  if (cache && now - cache.at < 200) {
-    return cache.node;
-  }
+  if (nodeCache && now - nodeCache.at < 300) return nodeCache.node;
   const node = computeStateNode();
-  cache = { node, at: now };
+  nodeCache = { node, at: now };
   return node;
 }
 
 export function stateDiagnostics(): Record<string, any> {
+  const { hunt } = computeHunt();
   const node = findStateNode();
-  const props = node?.props ?? {};
   const state = node?.state ?? {};
+  const props = node?.props ?? {};
+  const dom = collectDom();
+  const allFibers = walkFiberTree(dom.fibers.concat(fibersFromDevToolsHook()));
   return {
     found: !!node,
-    score: scoreNode(node),
-    hasLiveGameController: !!props.liveGameController,
-    hasClient: !!props.client,
-    clientType: props.client?.type ?? null,
-    clientName: props.client?.name ?? null,
-    hasQuestion: !!state.question || !!props.client?.question,
-    hasChoices: Array.isArray(state.choices),
-    hasGold: state.gold !== undefined || state.gold2 !== undefined,
-    stage: state.stage ?? null,
-    phase: state.phase ?? null,
+    score: hunt.bestScore,
+    controller: !!hunt.controller,
+    clientName: hunt.client?.name ?? null,
+    clientType: hunt.client?.type ?? null,
+    hasQuestion: !!hunt.question || !!state.question || !!props.client?.question,
+    hasGold: state.gold !== undefined || state.crypto !== undefined || state.cash !== undefined,
+    stage: state.stage ?? state.phase ?? null,
+    stateKeys: Object.keys(state).slice(0, 30),
+    fibers: allFibers.length,
+    visited: hunt.visited,
+    devtools: !!(window as AnyNode).__REACT_DEVTOOLS_GLOBAL_HOOK__,
+  };
+}
+
+export function debugDump(): Record<string, any> {
+  const dom = collectDom();
+  const allFibers = walkFiberTree(dom.fibers.concat(fibersFromDevToolsHook()));
+  const hunt = runHunt(huntSeeds());
+  return {
+    url: window.location.href,
+    fibers: allFibers.length,
+    controller: !!hunt.controller,
+    clientName: hunt.client?.name ?? null,
+    score: hunt.bestScore,
+    visited: hunt.visited,
+    devtools: !!(window as AnyNode).__REACT_DEVTOOLS_GLOBAL_HOOK__,
+    stateKeys: Object.keys(hunt.stateObj ?? {}).slice(0, 30),
+    reactKeysOnRoot: Object.keys(document.body?.firstElementChild ?? {}).slice(0, 12),
   };
 }

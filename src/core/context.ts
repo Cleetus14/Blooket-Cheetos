@@ -1,5 +1,5 @@
 import { MODES } from "../modes";
-import { findStateNode } from "./state";
+import { findStateNode, gameDocument } from "./state";
 
 export type PageKind = "game" | "lobby" | "dashboard" | "other";
 
@@ -136,13 +136,28 @@ function isQuizPath(path: string): boolean {
 }
 
 function looksLive(): boolean {
-  const d = document;
-  return !!(
-    d.querySelector("[class*='answerContainer']") ||
-    d.querySelector("[class*='typingAnswerWrapper']") ||
-    d.querySelector("[class*='goldDisplay']") ||
-    d.querySelector("canvas")
-  );
+  const d = gameDocument();
+  // Class names on the current Blooket frontend are hashed/renamed, so match
+  // broadly: any element whose class contains an answer/question/game marker.
+  const markers = [
+    "[class*='answer']", "[class*='question']", "[class*='choice']",
+    "[class*='feedback']", "[class*='gold']", "[class*='crypto']",
+    "[class*='token']", "[class*='fish']", "[class*='toys']",
+    "[class*='cash']", "[class*='round']", "[class*='score']",
+    "[class*='blook']", "[class*='questionContainer']",
+  ];
+  for (const marker of markers) {
+    if (d.querySelector(marker)) return true;
+  }
+  return !!d.querySelector("canvas");
+}
+
+// On the new frontend every live game URL looks like
+// `<mode>.blooket.com/<session>/play/<game>`, so the path itself is a strong
+// live signal even before the React tree is fully scanned.
+function pathLooksLive(): boolean {
+  const path = window.location.pathname.toLowerCase();
+  return path.includes("/play/") || path.includes("/game/");
 }
 
 function modeFromState(): string | null {
@@ -178,12 +193,16 @@ function modeFromState(): string | null {
 
 function isLiveGame(): boolean {
   const node = findStateNode();
-  if (!node) return looksLive();
-  const s = node.state ?? {};
-  const client = node.props?.client ?? {};
-  if (node.props?.liveGameController) return true;
-  if (s.stage || s.phase || s.question || client.question) return true;
-  if (Array.isArray(s.choices) || Array.isArray(client.questions)) return true;
-  if (s.gold !== undefined || s.crypto !== undefined || s.cash !== undefined) return true;
+  if (node) {
+    const s = node.state ?? {};
+    const client = node.props?.client ?? {};
+    const props = node.props ?? {};
+    if (props.liveGameController) return true;
+    if (s.stage || s.phase || s.question || client.question || props.question) return true;
+    if (Array.isArray(s.choices) || Array.isArray(client.questions)) return true;
+    if (s.gold !== undefined || s.crypto !== undefined || s.cash !== undefined) return true;
+    if (client.name && (s.gold !== undefined || s.crypto !== undefined || s.stage)) return true;
+  }
+  if (pathLooksLive()) return true;
   return looksLive();
 }

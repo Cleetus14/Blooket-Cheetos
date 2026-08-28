@@ -21,6 +21,30 @@ export const crazyKingdomCheats: CheatDef[] = [
     },
   },
   {
+    id: "kingdom-set-guests",
+    label: "Set Guests",
+    group: "Crazy Kingdom",
+    kind: "action",
+    inputs: [{ name: "amount", label: "Guests", type: "number", defaultValue: "100" }],
+    description: "Sets your guest count.",
+    run(api, args) {
+      const amount = parseInt(args.amount, 10);
+      if (!Number.isFinite(amount)) return;
+      api.setState({ guestScore: amount });
+    },
+  },
+  {
+    id: "kingdom-disable-toucan",
+    label: "Disable Toucan",
+    group: "Crazy Kingdom",
+    kind: "action",
+    description: "Stops the Toucan from ever taxing you.",
+    run(api) {
+      const node = api.node();
+      if (node) node.taxCounter = Number.MAX_VALUE;
+    },
+  },
+  {
     id: "kingdom-choice-esp",
     label: "Choice ESP",
     group: "Crazy Kingdom",

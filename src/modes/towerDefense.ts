@@ -55,4 +55,45 @@ export const towerDefenseCheats: CheatDef[] = [
       api.setState({ round });
     },
   },
+  {
+    id: "td-remove-enemies",
+    label: "Remove Enemies",
+    group: "Tower Defense",
+    kind: "action",
+    description: "Clears every enemy on the board.",
+    run(api) {
+      const node = api.node();
+      if (!node) return;
+      node.enemies = node.futureEnemies = [];
+    },
+  },
+  {
+    id: "td-remove-ducks",
+    label: "Remove Ducks",
+    group: "Tower Defense",
+    kind: "action",
+    description: "Removes all ducks and frees their tiles.",
+    run(api) {
+      const node = api.node();
+      const ducks = node?.ducks;
+      const tiles = node?.tiles;
+      if (!Array.isArray(ducks) || !Array.isArray(tiles)) return;
+      ducks.forEach((x: any) => {
+        if (tiles[x.y]) tiles[x.y][x.x] = 0;
+      });
+      ducks.length = 0;
+    },
+  },
+  {
+    id: "td-remove-obstacles",
+    label: "Remove Obstacles",
+    group: "Tower Defense",
+    kind: "action",
+    description: "Clears every obstacle tile.",
+    run(api) {
+      const node = api.node();
+      if (!Array.isArray(node?.tiles)) return;
+      node.tiles = node.tiles.map((row: any[]) => row.fill(0));
+    },
+  },
 ];

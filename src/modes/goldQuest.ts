@@ -309,4 +309,199 @@ export const goldQuestCheats: CheatDef[] = [
       });
     },
   },
+  {
+    id: "gold-steal-all",
+    label: "Steal All Gold",
+    group: "Gold Quest",
+    kind: "action",
+    inputs: [{ name: "amount", label: "Amount per player", type: "number", defaultValue: "250" }],
+    description: "Steals a set amount from every other player at once through the swap protocol. Overpowered, use carefully.",
+    run(api, args) {
+      const amount = parseInt(args.amount, 10);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        api.log("Enter a positive amount.");
+        return;
+      }
+      api.getVal("c", (players: any) => {
+        if (!players) return;
+        const me = api.client().name;
+        const others = Object.keys(players).filter((n) => n !== me);
+        if (!others.length) {
+          api.log("No other players found.");
+          return;
+        }
+        let stolen = 0;
+        const myGold = players[me]?.g ?? api.node()?.state?.gold ?? 0;
+        others.forEach((name, i) => {
+          const victimGold = players[name]?.g ?? 0;
+          if (victimGold <= 0) return;
+          const take = Math.min(amount, victimGold);
+          stolen += take;
+          setTimeout(() => {
+            api.setVal(`c/${me}`, {
+              b: api.client().blook,
+              tat: `${name}:swap:${victimGold - take}`,
+              g: myGold + stolen,
+            });
+          }, i * 120);
+        });
+        api.setState({ gold: myGold + stolen, gold2: myGold + stolen });
+        api.log("Stole " + stolen + " gold total from " + others.length + " players.");
+      });
+    },
+  },
+  {
+    id: "gold-no-bad-chests",
+    label: "No Bad Chests",
+    group: "Gold Quest",
+    kind: "toggle",
+    description: "Removes Lose 50% / Lose 25% / Nothing chests so every chest is a gain.",
+    run(api) {
+      return api.interval(() => {
+        const node = api.node();
+        const choices: any[] = node?.state?.choices ?? [];
+        if (!choices.length || node?.state?.stage !== "prize") return;
+        for (let i = choices.length - 1; i >= 0; i--) {
+          const c = choices[i];
+          if (c.type === "divide" || c.type === "nothing") choices.splice(i, 1);
+        }
+        if (choices.length && choices.length < 3) {
+          api.setState({ choices });
+        }
+      }, 150);
+    },
+  },
+  {
+    id: "gold-auto-steal",
+    label: "Auto Steal Richest",
+    group: "Gold Quest",
+    kind: "toggle",
+    inputs: [{ name: "percent", label: "Steal %", type: "number", defaultValue: "25" }],
+    description: "Every few seconds steals a percentage of the richest other player's gold. Overpowered - use carefully.",
+    run(api, args) {
+      const percent = Math.max(1, Math.min(parseInt(args.percent, 10) || 25, 100));
+      let busy = false;
+      return api.interval(() => {
+        if (busy) return;
+        if (!api.node()) return;
+        busy = true;
+        api.getVal("c", (players: any) => {
+          try {
+            if (!players) return;
+            const me = api.client().name;
+            if (!me) return;
+            let richestKey: string | null = null;
+            let richestGold = -1;
+            for (const name of Object.keys(players)) {
+              if (name === me) continue;
+              const g = players[name]?.g ?? 0;
+              if (g > richestGold) {
+                richestGold = g;
+                richestKey = name;
+              }
+            }
+            if (!richestKey || richestGold <= 0) return;
+            const steal = Math.max(1, Math.min(Math.floor((richestGold * percent) / 100), richestGold));
+            const myGold = (players[me]?.g ?? api.node()?.state?.gold ?? 0) + steal;
+            api.setVal(`c/${me}`, {
+              b: api.client().blook,
+              tat: `${richestKey}:swap:${richestGold - steal}`,
+              g: myGold,
+            });
+            api.setState({ gold: myGold, gold2: myGold });
+            api.log("Auto-stole " + steal + " gold from " + richestKey + ".");
+          } finally {
+            busy = false;
+          }
+        });
+      }, 2500);
+    },
+  },
+  {
+    id: "gold-randomize-all",
+    label: "Randomize All Gold",
+    group: "Gold Quest",
+    kind: "action",
+    warn: true,
+    description: "Sets every player's gold to a random amount. Total chaos.",
+    run(api) {
+      if (!api.node()) {
+        api.log("Game state not found yet. Wait for the game to load, then run again.");
+        return;
+      }
+      api.getVal("c", (players: any) => {
+        if (!players) return;
+        const me = api.client().name;
+        const others = Object.keys(players).filter((n) => n !== me);
+        const mine = Math.floor(Math.random() * 5000);
+        api.setState({ gold: mine, gold2: mine });
+        api.setVal(`c/${me}/g`, mine);
+        others.forEach((name, i) => {
+          const amount = Math.floor(Math.random() * 5000);
+          setTimeout(() => api.setVal(`c/${me}/tat`, `${name}:swap:${amount}`), i * 120);
+        });
+        api.log("Randomized gold for " + others.length + " players.");
+      });
+    },
+  },
+  {
+    id: "gold-give-all",
+    label: "Give Everyone Gold",
+    group: "Gold Quest",
+    kind: "action",
+    inputs: [{ name: "amount", label: "Gold", type: "number", defaultValue: "1000" }],
+    description: "Sets every player's gold to the same amount.",
+    run(api, args) {
+      const amount = parseInt(args.amount, 10);
+      if (!Number.isFinite(amount) || amount < 0) {
+        api.log("Enter a valid amount.");
+        return;
+      }
+      if (!api.node()) {
+        api.log("Game state not found yet. Wait for the game to load, then run again.");
+        return;
+      }
+      api.getVal("c", (players: any) => {
+        if (!players) return;
+        const me = api.client().name;
+        api.setState({ gold: amount, gold2: amount });
+        api.setVal(`c/${me}/g`, amount);
+        const others = Object.keys(players).filter((n) => n !== me);
+        others.forEach((name, i) => {
+          setTimeout(() => api.setVal(`c/${me}/tat`, `${name}:swap:${amount}`), i * 120);
+        });
+        api.log("Set everyone to " + amount + " gold.");
+      });
+    },
+  },
+  {
+    id: "gold-kick",
+    label: "Kick Player",
+    group: "Gold Quest",
+    kind: "action",
+    warn: true,
+    inputs: [{ name: "player", label: "Player", type: "text" }],
+    description: "Removes a player from the match by deleting their game node (experimental).",
+    run(api, args) {
+      const target = (args.player ?? "").trim();
+      if (!target) {
+        api.log("Enter a player name.");
+        return;
+      }
+      if (!api.node()) {
+        api.log("Game state not found yet. Wait for the game to load, then run again.");
+        return;
+      }
+      api.getVal("c", (players: any) => {
+        if (!players) return;
+        const found = findPlayer(players, target);
+        if (!found) {
+          api.log("Player not found: " + target);
+          return;
+        }
+        api.setVal(`c/${found[0]}`, null);
+        api.log("Kicked " + found[0] + " from the match.");
+      });
+    },
+  },
 ];

@@ -11,11 +11,18 @@ export function createApi(): CheatApi {
     state: () => node()?.state ?? {},
     client: () => node()?.props?.client ?? {},
     setState: (patch) => node()?.setState?.(patch),
-    setVal: (path, val) => node()?.props?.liveGameController?.setVal?.({ path, val }),
-    getVal: (path, cb) => node()?.props?.liveGameController?.getDatabaseVal?.(path, cb),
+    setVal: (path, val) => node()?.setVal?.(path, val),
+    getVal: (path, cb) => node()?.getVal?.(path, cb),
     question: (): Question | null => {
       const n = node();
-      return n?.state?.question ?? n?.props?.client?.question ?? null;
+      const fromNode = n?.question?.();
+      return (
+        fromNode ??
+        n?.props?.client?.question ??
+        n?.state?.question ??
+        n?.props?.question ??
+        null
+      );
     },
     answerCurrent: () => {
       const q = api.question();

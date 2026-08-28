@@ -1,5 +1,17 @@
 import type { CheatDef } from "../types";
 
+const DISTRACTIONS: Record<string, string> = {
+  c: "Oh Canada",
+  b: "Blizzard",
+  f: "Fog Spell",
+  d: "Dark & Dusk",
+  w: "Howling Wind",
+  g: "Gift Time!",
+  t: "TREES",
+  s: "Snow Plow",
+  fr: "Use The Force",
+};
+
 export const santaWorkshopCheats: CheatDef[] = [
   {
     id: "workshop-toys",
@@ -12,6 +24,33 @@ export const santaWorkshopCheats: CheatDef[] = [
       if (!Number.isFinite(amount)) return;
       api.setState({ toys: amount });
       api.setVal(`c/${api.client().name}/t`, amount);
+    },
+  },
+  {
+    id: "workshop-toys-per-q",
+    label: "Set Toys Per Question",
+    group: "Santa's Workshop",
+    kind: "action",
+    inputs: [{ name: "amount", label: "Toys per question", type: "number", defaultValue: "100" }],
+    run(api, args) {
+      const amount = parseInt(args.amount, 10);
+      if (!Number.isFinite(amount)) return;
+      api.setState({ toysPerQ: amount });
+    },
+  },
+  {
+    id: "workshop-send-distraction",
+    label: "Send Distraction",
+    group: "Santa's Workshop",
+    kind: "action",
+    description: "Sends a random distraction to another player through the game's own mechanic.",
+    run(api) {
+      const node = api.node();
+      if (node) node.safe = true;
+      const keys = Object.keys(DISTRACTIONS);
+      const val = keys[Math.floor(Math.random() * keys.length)];
+      api.setVal(`c/${api.client().name}/tat`, val);
+      api.log("Sent distraction: " + DISTRACTIONS[val] + ".");
     },
   },
   {
