@@ -665,9 +665,18 @@ export function mountPanel(api: CheatApi): PanelHandle {
   const hotkeyTargets = new WeakSet<object>();
   let lastHotkey = 0;
   const onHotkey = (e: KeyboardEvent) => {
+    if (!(e.ctrlKey && e.shiftKey)) return;
     const key = (e.code || e.key || "").toLowerCase();
+    const isMod = key === "shift" || key === "control" || key === "alt" || key === "meta";
     const isToggle = key === "keyx" || key === "x" || key === "keye" || key === "e";
-    if (!(e.ctrlKey && e.shiftKey && isToggle)) return;
+    if (!isToggle && !isMod) {
+      console.log(
+        "%c[Cheetos]%c hotkey: ctrl+shift+" + key,
+        "color:#facc15",
+        "color:inherit",
+      );
+    }
+    if (!isToggle) return;
     if (e.repeat) return;
     e.preventDefault();
     e.stopPropagation();
@@ -689,7 +698,7 @@ export function mountPanel(api: CheatApi): PanelHandle {
       docs = [document];
     }
     for (const d of docs) {
-      const targets: Array<EventTarget | null> = [window, d.defaultView, d, d.body];
+      const targets: Array<EventTarget | null> = [window, d.defaultView, d, d.documentElement, d.body];
       for (const t of targets) {
         if (!t || hotkeyTargets.has(t)) continue;
         hotkeyTargets.add(t);
@@ -699,6 +708,9 @@ export function mountPanel(api: CheatApi): PanelHandle {
     }
   };
   bindHotkeys();
+  // Blooket may create new same-origin iframes as you navigate modes; keep
+  // re-binding so a freshly focused frame can't swallow the hotkey.
+  setInterval(bindHotkeys, 2000);
 
   document.body.appendChild(root);
   makeDraggable(panel, head);

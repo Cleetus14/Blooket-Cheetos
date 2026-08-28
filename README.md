@@ -50,11 +50,11 @@ Chromebooks work exactly the same way — Chrome on ChromeOS accepts bookmarks j
 
 | Mode | Cheats |
 |---|---|
-| Global (any quiz mode) | Auto Answer, Highlight Answers, Every Answer Correct, Change Blook In Game, Remove Random Name, Use Any Blook, Sell Duplicate Blooks |
+| Global (any quiz mode) | Auto Answer, Highlight Answers, Every Answer Correct, Change Blook In Game, Remove Random Name, Use Any Blook, Sell Duplicate Blooks, Kick Player |
 | Rewards | Add Tokens (+XP) |
-| Gold Quest | Set Gold, Set Player Gold, Reset Player Gold, Reset All Gold, Silent Steal Gold, Silent Reset Gold, Ruin Chests, Chest ESP, Always Triple, Auto Choose, Swap Gold, Steal All Gold, No Bad Chests |
+| Gold Quest | Set Gold, Set Player Gold, Reset Player Gold, Reset All Gold, Silent Steal Gold, Silent Reset Gold, Ruin Chests, Chest ESP, Always Triple, Auto Choose, Swap Gold, Steal All Gold, No Bad Chests, Kick Player |
 | Cyber Hack | Set Crypto, Steal Player's Crypto, Set Password, Remove Hack, Always Triple, Auto Guess, Password ESP, Choice ESP |
-| Café | Set Cash, Stock Food, Max Items |
+| Café | Set Cash, Stock Food, Max Items, Remove Customers |
 | Factory | Set Cash, Max Blooks, Free Upgrades, Send Glitch, Remove Glitches, Set All Mega Bot |
 | Tower of Doom | Max Stats, Set Coins, Max Health, Fill Deck, Max Cards, Min Enemy |
 | Tower Defense | Set Tokens, Set Damage, Max Towers, Set Round, Remove Enemies, Remove Ducks, Remove Obstacles |
@@ -64,6 +64,8 @@ Chromebooks work exactly the same way — Chrome on ChromeOS accepts bookmarks j
 | Deceptive Dinos | Set Fossils, Set Multiplier, Auto Choose, Rock ESP |
 | Monster Brawl | Max Abilities, Instant Kill, Invincibility, Kill Enemies, Next Level, Double Enemy XP, Half Enemy Speed, Reset Health, Magnet, Remove Obstacles |
 | Santa's Workshop | Set Toys, Send Distraction, Set Toys Per Q |
+| Voyage | Set Doubloons, Steal Doubloons, Swap Doubloons, Start Heist, Max Island Levels |
+| Racing | Instant Win, Set Progress |
 
 Blooket Plus-only modes are not included.
 

@@ -1,5 +1,7 @@
 import type { CheatDef } from "../types";
-import { humanPause } from "../core/human";
+import { randomDelay } from "../core/human";
+import { clickChoiceByText } from "../core/dom";
+import { getSettings } from "../core/settings";
 
 function findPlayer(players: Record<string, any>, name: string): [string, any] | null {
   const key = Object.keys(players).find((k) => k.toLowerCase() === name.toLowerCase());
@@ -242,21 +244,28 @@ export const goldQuestCheats: CheatDef[] = [
     kind: "toggle",
     description: "Automatically picks the most valuable chest.",
     run(api) {
-      let busy = false;
+      let pickedSig = "";
       return api.interval(() => {
-        if (busy) return;
         const node = api.node();
-        if (!node || node.state?.stage !== "prize") return;
+        const stage = node?.state?.stage;
+        if (stage !== "prize") return;
+        const choices: any[] = node?.state?.choices ?? [];
+        if (!Array.isArray(choices) || !choices.length) return;
+        const sig = choices.map((c) => (c ? c.type + ":" + c.val : "")).join("|");
+        if (sig === pickedSig) return;
         api.getVal("c", (players: any) => {
-          if (!players || busy) return;
+          const n2 = api.node();
+          if (!n2 || n2.state?.stage !== "prize") return;
           let most = 0;
-          for (const name of Object.keys(players)) {
-            if (name === api.client().name) continue;
-            most = Math.max(most, players[name]?.g ?? 0);
+          const me = api.client().name;
+          if (players) {
+            for (const name of Object.keys(players)) {
+              if (name === me) continue;
+              most = Math.max(most, players[name]?.g ?? 0);
+            }
           }
-          const gold = node.state?.gold ?? 0;
-          const choices: any[] = node.state?.choices ?? [];
-          let best = -1;
+          const gold = n2.state?.gold ?? 0;
+          let bestIdx = -1;
           let bestValue = -Infinity;
           choices.forEach((choice, i) => {
             let value = gold;
@@ -267,19 +276,33 @@ export const goldQuestCheats: CheatDef[] = [
             else if (choice.type === "take") value = gold + most * (choice.val ?? 0);
             if (value > bestValue) {
               bestValue = value;
-              best = i + 1;
+              bestIdx = i;
             }
           });
-          busy = true;
-          (async () => {
-            try {
-              await humanPause();
-              if (node.state?.stage !== "prize") return;
-              (document.querySelector(`div[class*='choice${best}']`) as HTMLElement | null)?.click();
-            } finally {
-              busy = false;
+          if (bestIdx < 0) return;
+          pickedSig = sig;
+          const pick = () => {
+            const n3 = api.node();
+            if (!n3 || n3.state?.stage !== "prize") return;
+            // Preferred: the game's own pick handler (same call the chest
+            // onClick makes), so hashed CSS classes can't break it.
+            if (typeof n3.choosePrize === "function") {
+              n3.choosePrize(bestIdx);
+              return;
             }
-          })();
+            const el = document.querySelector(
+              `div[class*='choice${bestIdx + 1}']`,
+            ) as HTMLElement | null;
+            if (el) {
+              el.click();
+              return;
+            }
+            const text = choices[bestIdx]?.text;
+            if (!text || !clickChoiceByText(text)) pickedSig = ""; // allow retry
+          };
+          const s = getSettings();
+          if (s.delays) setTimeout(pick, randomDelay(s.minDelay, s.maxDelay));
+          else pick();
         });
       }, 150);
     },
@@ -481,7 +504,7 @@ export const goldQuestCheats: CheatDef[] = [
     kind: "action",
     warn: true,
     inputs: [{ name: "player", label: "Player", type: "text" }],
-    description: "Removes a player from the match by deleting their game node (experimental).",
+    description: "Best-effort removal. Blooket has no host-kick protocol, so this tries every removal hook the game exposes and then deletes the player's node; it may not visibly work.",
     run(api, args) {
       const target = (args.player ?? "").trim();
       if (!target) {
@@ -492,16 +515,12 @@ export const goldQuestCheats: CheatDef[] = [
         api.log("Game state not found yet. Wait for the game to load, then run again.");
         return;
       }
-      api.getVal("c", (players: any) => {
-        if (!players) return;
-        const found = findPlayer(players, target);
-        if (!found) {
-          api.log("Player not found: " + target);
-          return;
-        }
-        api.setVal(`c/${found[0]}`, null);
-        api.log("Kicked " + found[0] + " from the match.");
-      });
+      const attempts = api.kickPlayer(target);
+      if (!attempts.length) {
+        api.log("No removal hooks or Firebase write path were available.");
+        return;
+      }
+      api.log("Kick attempted for " + target + " (" + attempts.join(", ") + ").");
     },
   },
 ];

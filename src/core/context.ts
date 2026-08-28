@@ -33,13 +33,14 @@ const SUBDOMAIN_MODES: Record<string, string> = {
   kingdom: "kingdom",
   toy: "workshop",
   santa: "workshop",
+  voyage: "voyage",
+  racing: "racing",
   classic: "global",
-  racing: "global",
   royale: "global",
   "battle-royale": "global",
   battle: "global",
   candy: "global",
-  pirate: "global",
+  pirate: "voyage",
 };
 
 function modeFromSubdomain(host: string): string | null {
@@ -188,6 +189,8 @@ function modeFromState(): string | null {
   if (m.includes("tower")) return "tower";
   if (m.includes("kingdom")) return "kingdom";
   if (m.includes("toy") || m.includes("workshop") || m.includes("santa")) return "workshop";
+  if (m.includes("voyage") || m.includes("pirate") || m.includes("ship")) return "voyage";
+  if (m.includes("racing") || m.includes("race")) return "racing";
   return null;
 }
 

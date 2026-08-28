@@ -1,5 +1,6 @@
 export interface Question {
   qType?: string;
+  question?: string;
   answers: string[];
   correctAnswers: string[];
 }
@@ -31,7 +32,9 @@ export interface CheatApi {
   answerIndex(idx: number): boolean;
   answerTyping(): boolean;
   advance(): boolean;
+  kickPlayer(name: string): string[];
   interval(fn: () => void, ms: number): ToggleHandle;
+  runCheat(id: string, args?: Record<string, string>): unknown;
   log(msg: string): void;
 }
 

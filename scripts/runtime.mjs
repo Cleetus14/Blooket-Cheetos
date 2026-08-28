@@ -166,7 +166,13 @@ const fakeWindow = {
   setInterval,
   clearInterval,
   fetch: async () => ({}),
-  localStorage: { getItem: () => null, setItem: () => {} },
+  localStorage: {
+    getItem: (k) =>
+      k === "cheetos.settings"
+        ? JSON.stringify({ delays: false, typing: false, minDelay: 0, maxDelay: 0, accuracy: 100 })
+        : null,
+    setItem: () => {},
+  },
 };
 fakeWindow.listeners = {};
 
@@ -395,6 +401,112 @@ const globalController = {
 fakeWindow.__gameController = globalController;
 await settle();
 assert(!!api.node(), "F: state node found via window object graph");
+
+// ---------------------------------------------------------------------------
+// Scenario G: gold Auto Choose calls the game's own pick handler with the
+// most valuable chest (the fix for hashed CSS classes breaking clicks)
+// ---------------------------------------------------------------------------
+fakeDocument.body.children = [];
+delete fakeWindow.__gameController;
+const chooseCalls = [];
+const gState = {
+  gold: 200,
+  gold2: 200,
+  stage: "prize",
+  choices: [
+    { type: "gold", val: 100, text: "Choice A" },
+    { type: "multiply", val: 2, text: "Choice B" },
+  ],
+};
+const gFiber = {
+  memoizedProps: {
+    liveGameController: {
+      setVal(args) {
+        setValCalls.push(args);
+      },
+      getDatabaseVal(path, cb) {
+        cb({ TestPlayer: { g: 200 }, OtherPlayer: { g: 999 } });
+      },
+    },
+    client: { name: "TestPlayer", type: "gold" },
+  },
+  memoizedState: {
+    memoizedState: gState,
+    next: null,
+    queue: {
+      dispatch(merged) {
+        Object.assign(gState, merged);
+      },
+    },
+  },
+  choosePrize(idx) {
+    chooseCalls.push(idx);
+  },
+  child: null,
+  sibling: null,
+  return: null,
+  stateNode: null,
+};
+const gDiv = fakeDocument.createElement("div");
+gDiv.__reactFiber$test = gFiber;
+fakeDocument.body.children.push(gDiv);
+await settle();
+setValCalls = [];
+const acHandle = api.runCheat("gold-auto-choose");
+assert(!!acHandle, "G: gold-auto-choose starts");
+await sleep(700);
+// Best value: multiply 200 -> 400 beats gold+100 -> 300, so index 1 wins.
+assert(
+  chooseCalls.length >= 1 && chooseCalls[chooseCalls.length - 1] === 1,
+  "G: auto-choose picked the best chest via choosePrize, got " + chooseCalls.join(","),
+);
+assert(typeof acHandle.stop === "function", "G: auto-choose returns a stoppable handle");
+acHandle.stop();
+await sleep(250);
+const afterStop = chooseCalls.length;
+await sleep(400);
+assert(chooseCalls.length === afterStop, "G: auto-choose stopped picking after stop()");
+
+// ---------------------------------------------------------------------------
+// Scenario H: Every Answer Correct marks the live question (the reported
+// "does not work at all" bug)
+// ---------------------------------------------------------------------------
+const hQ = {
+  qType: "mc",
+  question: "What is 2+2?",
+  answers: ["3", "4", "5"],
+  correctAnswers: ["3"],
+};
+Object.assign(gState, { stage: "question", question: hQ });
+gFiber.freeQuestions = [
+  { question: "One", answers: ["a", "b"], correctAnswers: ["a"] },
+];
+await settle();
+const eacHandle = api.runCheat("global-every-correct");
+assert(!!eacHandle, "H: every-answer-correct starts");
+await sleep(700);
+assert(
+  hQ.correctAnswers.length === 3 && hQ.correctAnswers.join(",") === "3,4,5",
+  "H: live question answers all marked correct, got " + hQ.correctAnswers.join(","),
+);
+assert(
+  gFiber.freeQuestions[0].correctAnswers.join(",") === "a,b",
+  "H: freeQuestions list answers all marked correct",
+);
+eacHandle.stop();
+
+// ---------------------------------------------------------------------------
+// Scenario I: Kick Player tries every removal hook and reports attempts
+// ---------------------------------------------------------------------------
+const kicked = [];
+gFiber.memoizedProps.liveGameController.removePlayer = (name) => kicked.push(name);
+await settle();
+const attempts = api.kickPlayer("Victim");
+assert(
+  attempts.includes("removePlayer") && attempts.includes("nodeDelete"),
+  "I: kick tries removePlayer + node delete, got " + attempts.join(","),
+);
+assert(kicked.includes("Victim"), "I: removePlayer called with the target name");
 
 console.log = origLog;
 if (failures) {

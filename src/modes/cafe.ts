@@ -41,4 +41,30 @@ export const cafeCheats: CheatDef[] = [
       api.setState({ items: next });
     },
   },
+  {
+    id: "cafe-remove-customers",
+    label: "Remove Customers",
+    group: "Café",
+    kind: "action",
+    warn: true,
+    description: "Kicks every customer out of the café.",
+    run(api) {
+      const node = api.node();
+      const customers: any[] = node?.state?.customers ?? [];
+      if (!Array.isArray(customers)) {
+        api.log("No customers found.");
+        return;
+      }
+      customers.forEach((customer, i) => {
+        setTimeout(() => {
+          try {
+            if (customer?.blook) node.removeCustomer(i, true);
+          } catch {
+            /* ignore */
+          }
+        }, i * 250);
+      });
+      api.log("Removing " + customers.length + " customers.");
+    },
+  },
 ];

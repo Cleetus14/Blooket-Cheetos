@@ -152,6 +152,39 @@ export const monsterBrawlCheats: CheatDef[] = [
     },
   },
   {
+    id: "brawl-invincibility",
+    label: "Invincibility",
+    group: "Monster Brawl",
+    kind: "toggle",
+    description: "Disables every damage collider so nothing can hurt you.",
+    run(api) {
+      let patched: Array<{ collider: any; original: any }> = [];
+      const handle = api.interval(() => {
+        if (patched.length) return;
+        const node = api.node();
+        const colliders =
+          node?.game?.current?.config?.sceneConfig?.physics?.world?.colliders?._active ?? [];
+        for (const collider of colliders) {
+          const cb = collider?.collideCallback?.toString?.() ?? "";
+          if (cb.includes("invulnerableTime") || cb.includes("dmgCd")) {
+            patched.push({ collider, original: collider.collideCallback });
+            collider.collideCallback = () => {};
+          }
+        }
+      }, 300);
+      return {
+        running: () => handle.running(),
+        stop() {
+          handle.stop();
+          patched.forEach(({ collider, original }) => {
+            collider.collideCallback = original;
+          });
+          patched = [];
+        },
+      };
+    },
+  },
+  {
     id: "brawl-half-speed",
     label: "Half Enemy Speed",
     group: "Monster Brawl",

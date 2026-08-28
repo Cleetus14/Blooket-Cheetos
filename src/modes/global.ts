@@ -1,6 +1,6 @@
 import type { CheatDef } from "../types";
-import { humanPause, shouldMiss, typeAnswerHuman } from "../core/human";
-import { randomWrongIndex } from "../core/dom";
+import { randomDelay, shouldMiss, typeAnswerHuman } from "../core/human";
+import { isQuestionOnScreen, randomWrongIndex } from "../core/dom";
 import { getSettings } from "../core/settings";
 
 const GAME_IDS = [
@@ -22,57 +22,65 @@ export const globalCheats: CheatDef[] = [
     kind: "toggle",
     description: "Answers with human-like pacing and optional occasional misses.",
     run(api) {
-      let busy = false;
+      let answeredSig = "";
+      let advancedSig = "";
       return api.interval(() => {
-        if (busy) return;
         const node = api.node();
         const q = api.question();
-        if (!q) return;
-        const onFeedback = node?.state?.stage === "feedback" || !!node?.state?.feedback;
+        if (!node || !q || !Array.isArray(q.answers) || !q.answers.length) return;
         const s = getSettings();
+        const stage = node.state?.stage;
+        const inFeedback = stage === "feedback" || !!node.state?.feedback;
+        const sig = String(q.question ?? "") + "|" + q.answers.join("~");
 
         if (q.qType === "typing") {
-          if (!q.answers[0]) return;
-          busy = true;
-          (async () => {
-            try {
-              if (s.typing) await typeAnswerHuman(q.answers[0]);
-              else {
-                await humanPause();
-                api.answerTyping();
-              }
-            } finally {
-              busy = false;
-            }
-          })();
-        } else if (onFeedback) {
-          busy = true;
-          (async () => {
-            try {
-              await humanPause();
-              api.advance();
-            } finally {
-              busy = false;
-            }
-          })();
-        } else {
-          busy = true;
-          (async () => {
-            try {
-              await humanPause();
-              if (shouldMiss(s.accuracy)) {
-                const wrong = randomWrongIndex(q);
-                if (wrong >= 0) api.answerIndex(wrong);
-                else api.answerCurrent();
-              } else {
-                api.answerCurrent();
-              }
-            } finally {
-              busy = false;
-            }
-          })();
+          if (answeredSig === sig) return;
+          answeredSig = sig;
+          if (s.typing) {
+            void typeAnswerHuman(q.answers[0]).then((ok) => {
+              if (!ok) answeredSig = "";
+            });
+          } else {
+            api.answerTyping();
+          }
+          return;
         }
-      }, 150);
+
+        if (inFeedback) {
+          if (advancedSig === sig) return;
+          advancedSig = sig;
+          const doAdvance = () => {
+            if (!api.advance()) advancedSig = ""; // retry next tick
+          };
+          if (s.delays) setTimeout(doAdvance, randomDelay(s.minDelay, s.maxDelay));
+          else doAdvance();
+          return;
+        }
+
+        // Only click while the question is actually rendered (not on the
+        // chest/lobby/result screens). The prompt text is the reliable marker
+        // on the hashed-class frontend.
+        if (answeredSig === sig) return;
+        if (!isQuestionOnScreen(q)) return;
+        answeredSig = sig;
+        const doAnswer = () => {
+          const q2 = api.question();
+          const n2 = api.node();
+          if (!q2 || !n2) return;
+          const st = n2.state?.stage;
+          if (st === "feedback" || n2.state?.feedback) return; // already moved on
+          let ok: boolean;
+          if (shouldMiss(s.accuracy)) {
+            const wrong = randomWrongIndex(q2);
+            ok = wrong >= 0 ? api.answerIndex(wrong) : api.answerCurrent();
+          } else {
+            ok = api.answerCurrent();
+          }
+          if (!ok) answeredSig = ""; // nothing clickable yet; allow retry
+        };
+        if (s.delays) setTimeout(doAnswer, randomDelay(s.minDelay, s.maxDelay));
+        else doAnswer();
+      }, 120);
     },
   },
   {
@@ -320,7 +328,7 @@ export const globalCheats: CheatDef[] = [
     kind: "action",
     warn: true,
     inputs: [{ name: "player", label: "Player", type: "text" }],
-    description: "Removes a player from the current match by deleting their game node (experimental, works in most modes).",
+    description: "Best-effort removal. Blooket has no host-kick protocol, so this tries every removal hook the game exposes and then deletes the player's node; it may not visibly work.",
     run(api, args) {
       const target = (args.player ?? "").trim();
       if (!target) {
@@ -331,21 +339,12 @@ export const globalCheats: CheatDef[] = [
         api.log("Game state not found yet. Wait for the game to load, then run again.");
         return;
       }
-      api.getVal("c", (players: any) => {
-        if (!players) {
-          api.log("No player list found - are you in a game?");
-          return;
-        }
-        const entry = Object.entries(players).find(
-          (x) => (x[0] as string).toLowerCase() === target.toLowerCase(),
-        );
-        if (!entry) {
-          api.log("Player not found: " + target);
-          return;
-        }
-        api.setVal(`c/${entry[0]}`, null);
-        api.log("Kicked " + entry[0] + " from the match.");
-      });
+      const attempts = api.kickPlayer(target);
+      if (!attempts.length) {
+        api.log("No removal hooks or Firebase write path were available.");
+        return;
+      }
+      api.log("Kick attempted for " + target + " (" + attempts.join(", ") + ").");
     },
   },
 ];

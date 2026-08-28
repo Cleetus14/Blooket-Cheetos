@@ -23,7 +23,8 @@ function findAnswerByText(text: string): HTMLElement | null {
     doc().querySelectorAll("div,button,span,p,[role='button']"),
   ) as HTMLElement[];
   // Prefer elements that look interactive (role=button, button tags, cursor
-  // pointers) and whose text exactly matches, then fall back to any match.
+  // pointers) and whose text exactly matches, then fall back to any match,
+  // then to short elements that merely contain the answer text.
   for (const el of candidates) {
     if (!textMatches(el, text)) continue;
     const style = getComputedStyle(el);
@@ -37,6 +38,20 @@ function findAnswerByText(text: string): HTMLElement | null {
   }
   for (const el of candidates) {
     if (textMatches(el, text)) return el;
+  }
+  const needle = text.trim().toLowerCase();
+  for (const el of candidates) {
+    const t = (el.textContent ?? "").trim().toLowerCase();
+    if (t.length > 0 && t.length <= 80 && t.includes(needle)) {
+      const style = getComputedStyle(el);
+      if (
+        el.tagName === "BUTTON" ||
+        el.getAttribute("role") === "button" ||
+        style.cursor === "pointer"
+      ) {
+        return el;
+      }
+    }
   }
   return null;
 }
@@ -66,6 +81,43 @@ export function randomWrongIndex(question: Question): number {
   });
   if (!wrong.length) return -1;
   return wrong[Math.floor(Math.random() * wrong.length)];
+}
+
+// True when the current question's prompt text is actually visible on the
+// page. On the hashed-class frontend this is the reliable way to tell "the
+// question is on screen" apart from the chest/lobby/feedback screens, so
+// auto answer doesn't click random elements between questions.
+let questionScreenCache: { sig: string; at: number; visible: boolean } | null = null;
+
+export function isQuestionOnScreen(question: Question): boolean {
+  const prompt = String(question.question ?? "").trim().toLowerCase();
+  if (!prompt) return true;
+  const sig = prompt + "|" + (question.answers ?? []).join("~");
+  const now = Date.now();
+  if (questionScreenCache && questionScreenCache.sig === sig && now - questionScreenCache.at < 400) {
+    return questionScreenCache.visible;
+  }
+  let visible = false;
+  const nodes = doc().querySelectorAll("div,span,p,h1,h2,h3");
+  const cap = Math.min(nodes.length, 1500);
+  for (let i = 0; i < cap; i++) {
+    const t = (nodes[i].textContent ?? "").trim().toLowerCase();
+    if (t === prompt) {
+      visible = true;
+      break;
+    }
+  }
+  questionScreenCache = { sig, at: now, visible };
+  return visible;
+}
+
+export function clickChoiceByText(text: string): boolean {
+  const el = findAnswerByText(text);
+  if (el) {
+    el.click();
+    return true;
+  }
+  return false;
 }
 
 export function clickCorrect(question: Question): boolean {

@@ -115,7 +115,17 @@ function propsOf(el: HTMLElement): AnyNode | null {
 
 function ownerStateNodeOf(el: HTMLElement): AnyNode | null {
   const props = propsOf(el);
-  return props?.children?.[0]?._owner?.stateNode ?? null;
+  const kids = props?.children;
+  const first = Array.isArray(kids) ? kids[0] : kids;
+  if (first?._owner?.stateNode) return first._owner.stateNode;
+  // Legacy ordered lookup used by the classic getStateNode trick: the props
+  // object sits at index 1 of the DOM node's React-internal values.
+  const values = Object.values(el) as AnyNode[];
+  const legacy = values[1];
+  const lkids = legacy?.children;
+  const lfirst = Array.isArray(lkids) ? lkids[0] : lkids;
+  if (lfirst?._owner?.stateNode) return lfirst._owner.stateNode;
+  return null;
 }
 
 // Exact port of the reference walk: descend `body>div > div > ...` and return
@@ -318,11 +328,12 @@ function consider(o: AnyNode, hunt: Hunt): void {
     if (!hunt.client) hunt.client = o;
   }
 
-  // A question object.
+  // A question object. The one with a real prompt field is the live
+  // question; bare answer blobs from freeQuestions lists must not shadow it.
   if (isObj(o.question) && Array.isArray(o.question.answers)) {
     score += 30000;
     if (Array.isArray(o.question.correctAnswers)) score += 10000;
-    if (!hunt.question) hunt.question = o.question;
+    if (!hunt.question || !hunt.question.question) hunt.question = o.question;
   }
   if (Array.isArray(o.answers) && Array.isArray(o.correctAnswers)) {
     score += 20000;
@@ -504,11 +515,13 @@ function buildNode(hunt: Hunt, fibers: AnyNode[]): AnyNode | null {
   const stateObj = (): AnyNode => {
     const merged: AnyNode = {};
     const parts = [
+      hunt.question,
       hunt.client,
       hunt.classNode?.state,
       hunt.stateObj,
-      hunt.question,
     ];
+    // hunt.question is merged first so a live question living on the actual
+    // state object wins over a bare blob found earlier in the walk.
     for (const p of parts) {
       if (isObj(p)) Object.assign(merged, p);
     }
@@ -584,7 +597,32 @@ function buildNode(hunt: Hunt, fibers: AnyNode[]): AnyNode | null {
   };
 
   const questionOf = (): AnyNode =>
-    hunt.question ?? hunt.client?.question ?? stateObj().question ?? null;
+    hunt.client?.question ?? stateObj().question ?? hunt.question ?? null;
+
+  // React fiber internals that must never leak through the node proxy.
+  const FIBER_RESERVED = new Set([
+    "memoizedProps",
+    "memoizedState",
+    "pendingProps",
+    "child",
+    "sibling",
+    "return",
+    "stateNode",
+    "type",
+    "key",
+    "ref",
+    "index",
+    "lanes",
+    "alternate",
+    "elementType",
+    "mode",
+    "flags",
+    "tag",
+    "updateQueue",
+    "dependencies",
+    "_debugOwner",
+    "_debugSource",
+  ]);
 
   return new Proxy(source, {
     get(t, prop: string, recv) {
@@ -597,6 +635,18 @@ function buildNode(hunt: Hunt, fibers: AnyNode[]): AnyNode | null {
       if (prop === "forceUpdate") return forceUpdate;
       if (prop === "question") return questionOf;
       if (prop in t) return Reflect.get(t, prop, recv);
+      // The live game instance (choosePrize, kickPlayer, removeCustomer,
+      // freeQuestions, ...) often lives on the fiber itself, not on the
+      // controller that owns setVal/getVal. Forward those so cheats reach
+      // the real game methods instead of falling back to DOM guessing.
+      if (hunt.stateFiber && !FIBER_RESERVED.has(prop) && prop in hunt.stateFiber) {
+        const v = Reflect.get(hunt.stateFiber, prop, hunt.stateFiber);
+        if (v !== undefined) return v;
+      }
+      if (hunt.classNode && !FIBER_RESERVED.has(prop) && prop in hunt.classNode) {
+        const v = Reflect.get(hunt.classNode, prop, hunt.classNode);
+        if (v !== undefined) return v;
+      }
       if (hunt.client && prop in hunt.client) return hunt.client[prop];
       const s = stateObj();
       if (prop in s) return s[prop];
@@ -683,6 +733,118 @@ function bestEffortSetState(fiber: AnyNode | null, patch: AnyNode, fibers: AnyNo
 }
 
 // ---------------------------------------------------------------------------
+// Reference-style class instance (the classic getStateNode trick)
+//
+// The game is a React class component. The reference approach walks down
+// body>div > div > ... and returns the first `_owner.stateNode` class
+// instance it finds, then every cheat mutates that instance's LIVE
+// state/props directly. We do the same, preferring game-shaped instances so
+// the walk doesn't grab a random dashboard component, then wrap the instance
+// in a thin proxy that only adds setVal/getVal/question helpers.
+// ---------------------------------------------------------------------------
+
+function referenceWalkInstance(doc: Document): AnyNode | null {
+  const start = doc.querySelector("body>div");
+  if (!start) return null;
+  let current: HTMLElement | null = start as HTMLElement;
+  let depth = 0;
+  let fallback: AnyNode | null = null;
+  while (current && depth < 800) {
+    const sn = ownerStateNodeOf(current);
+    if (sn && typeof sn.setState === "function" && isObj(sn.state)) {
+      const props = sn.props ?? {};
+      const s = sn.state ?? {};
+      const gameShaped =
+        isObj(props.liveGameController) ||
+        isObj(props.client) ||
+        s.question !== undefined ||
+        s.stage !== undefined ||
+        s.phase !== undefined ||
+        s.gold !== undefined ||
+        s.crypto !== undefined ||
+        s.cash !== undefined ||
+        s.doubloons !== undefined;
+      if (gameShaped) return sn;
+      if (!fallback) fallback = sn;
+    }
+    const child = current.querySelector(":scope>div");
+    if (!child || child === current) break;
+    current = child as HTMLElement;
+    depth++;
+  }
+  return fallback;
+}
+
+function findReferenceInstance(): AnyNode | null {
+  for (const doc of allDocuments()) {
+    const inst = referenceWalkInstance(doc);
+    if (inst) return inst;
+  }
+  return null;
+}
+
+// Thin live wrapper: everything reads/writes straight through to the real
+// class instance (state, props, game, freeQuestions, choosePrize, ...), so
+// mutations stick. Only the Firebase helpers are synthesized from
+// props.liveGameController, exactly where the game itself keeps them.
+function wrapLiveNode(instance: AnyNode): AnyNode {
+  const controller: AnyNode = instance?.props?.liveGameController ?? null;
+  const client: AnyNode = instance?.props?.client ?? null;
+  return new Proxy(instance, {
+    get(t, prop: string) {
+      if (prop === "setVal") {
+        return (path: string, val: unknown) => {
+          if (!controller || typeof controller.setVal !== "function") return;
+          try {
+            if (controller.setVal.length >= 2) controller.setVal(path, val);
+            else controller.setVal({ path, val });
+          } catch {
+            try {
+              controller.setVal({ path, val });
+            } catch {
+              /* ignore */
+            }
+          }
+        };
+      }
+      if (prop === "getVal" || prop === "getDatabaseVal") {
+        return (path: string, cb: (val: any) => void) => {
+          if (!controller) return;
+          const fn = controller.getDatabaseVal ?? controller.getVal;
+          if (typeof fn !== "function") return;
+          try {
+            const r = fn.call(controller, path, cb);
+            if (r && typeof r.then === "function") r.then(cb).catch(() => {});
+          } catch {
+            /* ignore */
+          }
+        };
+      }
+      if (prop === "question") {
+        return () => t.state?.question ?? t.props?.client?.question ?? null;
+      }
+      if (prop === "forceUpdate") {
+        return () => {
+          try {
+            t.forceUpdate?.();
+          } catch {
+            /* ignore */
+          }
+        };
+      }
+      if (prop === "client") return client ?? t.props?.client ?? null;
+      const v = Reflect.get(t, prop);
+      if (typeof v === "function" && prop !== "constructor") return v.bind(t);
+      return v;
+    },
+    set(t, prop, value) {
+      t[prop] = value;
+      return true;
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -722,7 +884,11 @@ function computeStateNode(): AnyNode | null {
 export function findStateNode(): AnyNode | null {
   const now = Date.now();
   if (nodeCache && now - nodeCache.at < 300) return nodeCache.node;
-  const node = computeStateNode();
+  // Reference-first: the game is a class component, so the classic walk gets
+  // the real live instance. The object-graph hunt is only a fallback for
+  // builds that stopped mounting the game as a class component.
+  const ref = findReferenceInstance();
+  const node = ref ? wrapLiveNode(ref) : computeStateNode();
   nodeCache = { node, at: now };
   return node;
 }

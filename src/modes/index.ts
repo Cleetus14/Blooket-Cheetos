@@ -12,6 +12,8 @@ import { blookRushCheats } from "./blookRush";
 import { deceptiveDinosCheats } from "./deceptiveDinos";
 import { monsterBrawlCheats } from "./monsterBrawl";
 import { santaWorkshopCheats } from "./santaWorkshop";
+import { voyageCheats } from "./voyage";
+import { racingCheats } from "./racing";
 
 export interface ModeDef {
   id: string;
@@ -94,6 +96,18 @@ export const MODES: ModeDef[] = [
     label: "Santa's Workshop",
     match: any("/play/toy", "/toy/play/landing"),
     cheats: santaWorkshopCheats,
+  },
+  {
+    id: "voyage",
+    label: "Voyage",
+    match: any("/play/voyage", "/voyage/play/landing", "/voyage/landing"),
+    cheats: voyageCheats,
+  },
+  {
+    id: "racing",
+    label: "Racing",
+    match: any("/play/racing", "/racing/play/landing"),
+    cheats: racingCheats,
   },
 ];
 
