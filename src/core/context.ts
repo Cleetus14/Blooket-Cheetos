@@ -11,12 +11,72 @@ export interface AppContext {
   signature: string;
 }
 
+// Blooket now serves each game mode on its own subdomain
+// (e.g. gold.blooket.com/<session>/play/<game>). The old /play/<mode>
+// path routes still exist for a few legacy links, so both are matched.
+const SUBDOMAIN_MODES: Record<string, string> = {
+  gold: "gold",
+  crypto: "crypto",
+  hack: "crypto",
+  fish: "fishing",
+  fishing: "fishing",
+  defense: "defense",
+  defense2: "defense",
+  brawl: "brawl",
+  dino: "dino",
+  dinos: "dino",
+  cafe: "cafe",
+  factory: "factory",
+  rush: "rush",
+  tower: "tower",
+  doom: "tower",
+  kingdom: "kingdom",
+  toy: "workshop",
+  santa: "workshop",
+  classic: "global",
+  racing: "global",
+  royale: "global",
+  "battle-royale": "global",
+  battle: "global",
+  candy: "global",
+  pirate: "global",
+};
+
+function modeFromSubdomain(host: string): string | null {
+  const sub = host.split(".")[0];
+  return SUBDOMAIN_MODES[sub] ?? null;
+}
+
 export function detectContext(): AppContext {
   const host = window.location.hostname.toLowerCase();
   const path = window.location.pathname.toLowerCase();
 
   if (!host.includes("blooket.com")) {
     return { kind: "other", modeId: null, modeLabel: null, live: false, signature: "other" };
+  }
+
+  const subMode = modeFromSubdomain(host);
+  if (subMode) {
+    const live = isLiveGame();
+    if (subMode === "global") {
+      return {
+        kind: "game",
+        modeId: "global",
+        modeLabel: "Quiz",
+        live,
+        signature: `game:global:${live ? 1 : 0}`,
+      };
+    }
+    const def = MODES.find((m) => m.id === subMode);
+    if (def) {
+      return {
+        kind: "game",
+        modeId: def.id,
+        modeLabel: def.label,
+        live,
+        signature: `game:${def.id}:${live ? 1 : 0}`,
+      };
+    }
   }
 
   const mode = MODES.find((m) => m.match(path)) ?? null;

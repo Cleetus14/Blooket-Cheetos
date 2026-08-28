@@ -652,13 +652,19 @@ export function mountPanel(api: CheatApi): PanelHandle {
   toggle.addEventListener("click", togglePanel);
   close.addEventListener("click", () => setHidden(true));
 
-  window.addEventListener("keydown", (e) => {
-    if (e.ctrlKey && e.shiftKey && (e.key === "X" || e.key === "x")) {
-      e.preventDefault();
-      e.stopPropagation();
-      togglePanel();
-    }
-  });
+  let lastHotkey = 0;
+  const onHotkey = (e: KeyboardEvent) => {
+    const isX = e.code === "KeyX" || e.key === "X" || e.key === "x";
+    if (!(e.ctrlKey && e.shiftKey && isX)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const now = Date.now();
+    if (now - lastHotkey < 80) return;
+    lastHotkey = now;
+    togglePanel();
+  };
+  window.addEventListener("keydown", onHotkey, true);
+  document.addEventListener("keydown", onHotkey, true);
 
   document.body.appendChild(root);
   makeDraggable(panel, head);
