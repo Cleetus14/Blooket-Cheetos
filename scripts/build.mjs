@@ -1,10 +1,39 @@
 import { build } from "esbuild";
-import { mkdirSync, copyFileSync } from "fs";
+import { mkdirSync, readFileSync, writeFileSync } from "fs";
 import { fileURLToPath } from "url";
 import { dirname, resolve } from "path";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const watching = process.argv.includes("--watch");
+
+// Blooket serves a strict Content Security Policy that blocks externally hosted
+// <script src> tags (both GitHub Pages and CDNs get refused). Bookmarklet code
+// itself is exempt from that CSP in Chromium, so the entire bundle is packed
+// into the bookmark URL. Nothing is ever loaded from the network at runtime.
+function makeBookmarklet() {
+  const code = readFileSync(resolve(root, "dist/cheetos.js"), "utf8").trim();
+  const encoded = encodeURIComponent(code).replace(/'/g, "%27");
+  if (decodeURIComponent(encoded) !== code) {
+    throw new Error("bookmarklet round-trip check failed");
+  }
+  return "javascript:" + encoded;
+}
+
+function writeDist() {
+  const bookmarklet = makeBookmarklet();
+  writeFileSync(resolve(root, "dist/bookmarklet.txt"), bookmarklet);
+
+  const template = readFileSync(resolve(root, "bookmarklets/import.html"), "utf8");
+  const html = template.split("__BOOKMARKLET__").join(bookmarklet);
+  if (html === template) {
+    throw new Error("import.html template is missing the __BOOKMARKLET__ placeholder");
+  }
+  writeFileSync(resolve(root, "dist/index.html"), html);
+
+  console.log(
+    "wrote dist/bookmarklet.txt (" + bookmarklet.length + " chars) and dist/index.html",
+  );
+}
 
 async function run() {
   mkdirSync(resolve(root, "dist"), { recursive: true });
@@ -25,15 +54,22 @@ async function run() {
       watch: {
         onRebuild(error) {
           if (error) console.error(error);
-          else console.log("rebuilt dist/cheetos.js");
+          else {
+            try {
+              writeDist();
+              console.log("rebuilt dist/cheetos.js");
+            } catch (err) {
+              console.error(err);
+            }
+          }
         },
       },
     });
+    writeDist();
     console.log("watching src/ for changes...");
   } else {
     await build(shared);
-    copyFileSync(resolve(root, "bookmarklets/import.html"), resolve(root, "dist/index.html"));
-    copyFileSync(resolve(root, "bookmarklets/bookmarklet.txt"), resolve(root, "dist/bookmarklet.txt"));
+    writeDist();
     console.log("built dist/cheetos.js");
   }
 }

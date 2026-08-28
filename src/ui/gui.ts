@@ -20,61 +20,133 @@ function stopAllToggles(): void {
   }
 }
 
-function ensureStyle(): void {
-  if (document.getElementById("cheetos-style")) return;
-  const css = `
-#cheetos-root, #cheetos-root * { box-sizing: border-box; font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }
-#cheetos-toggle { position: fixed; right: 14px; bottom: 14px; z-index: 2147483000; background: #7c3aed; color: #fff; border: none; border-radius: 999px; padding: 10px 16px; font-size: 14px; font-weight: 700; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,.35); }
-#cheetos-panel { position: fixed; top: 12px; right: 12px; z-index: 2147483001; width: 360px; max-height: 84vh; display: flex; flex-direction: column; background: #18181b; color: #e4e4e7; border: 1px solid #3f3f46; border-radius: 12px; box-shadow: 0 12px 32px rgba(0,0,0,.5); overflow: hidden; }
-#cheetos-panel.hidden { display: none; }
-#cheetos-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; background: #27272a; cursor: grab; user-select: none; }
-#cheetos-head .title { font-weight: 800; font-size: 15px; color: #facc15; margin-right: auto; }
-#cheetos-status { font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 999px; background: #3f3f46; color: #a1a1aa; white-space: nowrap; }
-#cheetos-status.live { background: #14532d; color: #86efac; }
-#cheetos-status.waiting { background: #451a03; color: #fcd34d; }
-#cheetos-close { background: none; border: none; color: #a1a1aa; font-size: 18px; cursor: pointer; }
-#cheetos-tabs { display: flex; gap: 4px; overflow-x: auto; padding: 8px 10px; background: #202024; border-bottom: 1px solid #3f3f46; }
-#cheetos-tabs::-webkit-scrollbar { height: 6px; }
-#cheetos-tabs::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 3px; }
-.cheetos-tab { flex: 0 0 auto; border: 1px solid transparent; background: transparent; color: #a1a1aa; font-size: 12px; font-weight: 700; padding: 5px 10px; border-radius: 999px; cursor: pointer; white-space: nowrap; }
-.cheetos-tab:hover { background: #2c2c31; color: #e4e4e7; }
-.cheetos-tab.active { background: #7c3aed; color: #fff; }
-.cheetos-tab.live { border-color: #22c55e; }
-#cheetos-body { overflow-y: auto; padding: 8px 10px 12px; }
-.cheetos-note { padding: 10px 12px; font-size: 12.5px; color: #a1a1aa; line-height: 1.5; background: #202024; border-radius: 8px; margin-bottom: 8px; }
-.cheetos-group { margin: 10px 0 4px; }
-.cheetos-group-title { font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: #a78bfa; margin-bottom: 6px; }
-.cheetos-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; flex-wrap: wrap; }
-.cheetos-btn { flex: 1 1 auto; min-width: 120px; text-align: left; background: #3f3f46; color: #fafafa; border: none; border-radius: 8px; padding: 7px 10px; font-size: 13px; cursor: pointer; transition: background .12s; }
-.cheetos-btn:hover { background: #52525b; }
-.cheetos-btn.active { background: #16a34a; }
-.cheetos-btn.warn { background: #b91c1c; text-align: center; }
-.cheetos-input { width: 84px; background: #27272a; color: #fafafa; border: 1px solid #52525b; border-radius: 6px; padding: 6px 7px; font-size: 12px; }
-.cheetos-hint { padding: 4px 12px 10px; font-size: 11px; color: #71717a; line-height: 1.5; }
-.cheetos-setting-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 0; }
-.cheetos-setting-row label { font-size: 13px; color: #d4d4d8; }
-`;
-  const style = document.createElement("style");
-  style.id = "cheetos-style";
-  style.textContent = css;
-  document.head.appendChild(style);
+function sty<T extends HTMLElement>(el: T, props: Record<string, string>): T {
+  for (const key of Object.keys(props)) {
+    (el.style as any)[key] = props[key];
+  }
+  return el;
+}
+
+const C = {
+  bg: "#18181b",
+  bg2: "#202024",
+  bg3: "#27272a",
+  border: "#3f3f46",
+  text: "#e4e4e7",
+  muted: "#a1a1aa",
+  faint: "#71717a",
+  accent: "#7c3aed",
+  green: "#16a34a",
+  red: "#b91c1c",
+  gold: "#facc15",
+  purple: "#a78bfa",
+  font: "Segoe UI, system-ui, -apple-system, sans-serif",
+};
+
+function noteEl(text: string): HTMLElement {
+  const el = sty(document.createElement("div"), {
+    padding: "10px 12px",
+    fontSize: "12.5px",
+    color: C.muted,
+    lineHeight: "1.5",
+    background: C.bg2,
+    borderRadius: "8px",
+    marginBottom: "8px",
+  });
+  el.textContent = text;
+  return el;
+}
+
+function hintEl(text: string): HTMLElement {
+  const el = sty(document.createElement("div"), {
+    padding: "4px 12px 10px",
+    fontSize: "11px",
+    color: C.faint,
+    lineHeight: "1.5",
+  });
+  el.textContent = text;
+  return el;
+}
+
+function groupEl(name: string): HTMLElement {
+  const group = sty(document.createElement("div"), { margin: "10px 0 4px" });
+  const title = sty(document.createElement("div"), {
+    fontSize: "12px",
+    fontWeight: "800",
+    letterSpacing: ".08em",
+    textTransform: "uppercase",
+    color: C.purple,
+    marginBottom: "6px",
+  });
+  title.textContent = name;
+  group.appendChild(title);
+  return group;
+}
+
+function rowEl(): HTMLElement {
+  return sty(document.createElement("div"), {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    marginBottom: "6px",
+    flexWrap: "wrap",
+  });
+}
+
+function inputEl(): HTMLInputElement {
+  return sty(document.createElement("input"), {
+    width: "84px",
+    background: C.bg3,
+    color: "#fafafa",
+    border: "1px solid #52525b",
+    borderRadius: "6px",
+    padding: "6px 7px",
+    fontSize: "12px",
+    fontFamily: C.font,
+  });
+}
+
+function btnEl(active = false, warn = false): HTMLButtonElement {
+  const el = sty(document.createElement("button"), {
+    flex: "1 1 auto",
+    minWidth: "120px",
+    textAlign: "left",
+    background: warn ? C.red : active ? C.green : C.border,
+    color: "#fafafa",
+    border: "none",
+    borderRadius: "8px",
+    padding: "7px 10px",
+    fontSize: "13px",
+    cursor: "pointer",
+    fontFamily: C.font,
+  });
+  if (active) el.classList.add("active");
+  if (warn) el.dataset.warn = "1";
+  el.addEventListener("mouseenter", () => {
+    if (!el.classList.contains("active")) el.style.background = warn ? "#7f1d1d" : "#52525b";
+  });
+  el.addEventListener("mouseleave", () => {
+    if (!el.classList.contains("active")) el.style.background = warn ? C.red : C.border;
+  });
+  return el;
+}
+
+function setBtnActive(el: HTMLButtonElement, active: boolean): void {
+  el.classList.toggle("active", active);
+  el.style.background = active ? C.green : el.dataset.warn ? C.red : C.border;
 }
 
 function buildRow(def: CheatDef, api: CheatApi): HTMLElement {
-  const row = document.createElement("div");
-  row.className = "cheetos-row";
+  const row = rowEl();
 
-  const btn = document.createElement("button");
-  btn.className = "cheetos-btn";
+  const btn = btnEl(def.kind === "toggle" && !!ACTIVE[def.id]);
   btn.textContent = def.label;
   btn.title = def.description ?? def.label;
-  if (def.kind === "toggle" && ACTIVE[def.id]) btn.classList.add("active");
   row.appendChild(btn);
 
   const inputs: HTMLInputElement[] = [];
   for (const input of def.inputs ?? []) {
-    const el = document.createElement("input");
-    el.className = "cheetos-input";
+    const el = inputEl();
     el.type = input.type === "number" ? "number" : "text";
     el.placeholder = input.placeholder ?? input.label;
     el.value = input.defaultValue ?? "";
@@ -94,13 +166,13 @@ function buildRow(def: CheatDef, api: CheatApi): HTMLElement {
         if (handle) {
           handle.stop();
           delete ACTIVE[def.id];
-          btn.classList.remove("active");
+          setBtnActive(btn, false);
           return;
         }
         const started = def.run(api, args);
         if (started) {
           ACTIVE[def.id] = started;
-          btn.classList.add("active");
+          setBtnActive(btn, true);
         }
         return;
       }
@@ -123,41 +195,32 @@ function groupsOf(cheats: CheatDef[]): Map<string, CheatDef[]> {
 }
 
 function buildGroup(name: string, defs: CheatDef[], api: CheatApi): HTMLElement {
-  const group = document.createElement("div");
-  group.className = "cheetos-group";
-  const title = document.createElement("div");
-  title.className = "cheetos-group-title";
-  title.textContent = name;
-  group.appendChild(title);
+  const group = groupEl(name);
   for (const def of defs) group.appendChild(buildRow(def, api));
   return group;
 }
 
 function buildGlobalNote(ctx: AppContext): HTMLElement {
-  const note = document.createElement("div");
-  note.className = "cheetos-note";
   if (ctx.kind === "game") {
-    note.textContent = "In " + ctx.modeLabel + ". Global cheats work in every mode.";
-  } else if (ctx.kind === "lobby") {
-    note.textContent = "In a lobby. Toggle cheats now — they engage automatically when the game starts.";
-  } else {
-    note.textContent = "On the dashboard. Toggle cheats now — they engage automatically when a game starts.";
+    return noteEl("In " + ctx.modeLabel + ". Global cheats work in every mode.");
   }
-  return note;
+  if (ctx.kind === "lobby") {
+    return noteEl("In a lobby. Toggle cheats now — they engage automatically when the game starts.");
+  }
+  return noteEl("On the dashboard. Toggle cheats now — they engage automatically when a game starts.");
 }
 
 function buildModeNote(ctx: AppContext, mode: ModeDef): HTMLElement {
-  const note = document.createElement("div");
-  note.className = "cheetos-note";
   if (ctx.kind === "game" && ctx.modeId === mode.id) {
-    note.textContent = ctx.live
-      ? "Live " + mode.label + " game detected — cheats are ready."
-      : "In the " + mode.label + " lobby. Toggles arm now and engage when the host starts.";
-  } else {
-    note.textContent =
-      "Not in " + mode.label + " yet. Arm toggles here — they engage automatically once the game starts.";
+    return noteEl(
+      ctx.live
+        ? "Live " + mode.label + " game detected — cheats are ready."
+        : "In the " + mode.label + " lobby. Toggles arm now and engage when the host starts.",
+    );
   }
-  return note;
+  return noteEl(
+    "Not in " + mode.label + " yet. Arm toggles here — they engage automatically once the game starts.",
+  );
 }
 
 function buildTabContent(ctx: AppContext, api: CheatApi, onStopAll: () => void): HTMLElement {
@@ -167,12 +230,11 @@ function buildTabContent(ctx: AppContext, api: CheatApi, onStopAll: () => void):
     wrap.appendChild(buildGlobalNote(ctx));
     for (const [name, defs] of groupsOf(globalCheats)) wrap.appendChild(buildGroup(name, defs, api));
     wrap.appendChild(buildSettingsGroup());
-    const row = document.createElement("div");
-    row.className = "cheetos-row";
-    const stop = document.createElement("button");
-    stop.className = "cheetos-btn warn";
+    const row = rowEl();
+    const stop = btnEl(false, true);
     stop.textContent = "Stop All Cheats";
     stop.title = "Stops every running toggle.";
+    stop.style.textAlign = "center";
     stop.addEventListener("click", () => {
       stopAllToggles();
       onStopAll();
@@ -194,28 +256,35 @@ function clampInt(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, Math.round(v)));
 }
 
+function settingRow(): HTMLElement {
+  return sty(document.createElement("div"), {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "8px",
+    padding: "5px 0",
+  });
+}
+
 function settingToggle(
   label: string,
   tip: string,
   read: () => boolean,
   write: (on: boolean) => void,
 ): HTMLElement {
-  const row = document.createElement("div");
-  row.className = "cheetos-setting-row";
-  const lab = document.createElement("label");
+  const row = settingRow();
+  const lab = sty(document.createElement("label"), { fontSize: "13px", color: "#d4d4d8" });
   lab.textContent = label;
   lab.title = tip;
-  const btn = document.createElement("button");
-  btn.className = "cheetos-btn";
-  btn.style.minWidth = "64px";
+  const btn = btnEl(read());
   btn.style.flex = "0 0 64px";
+  btn.style.minWidth = "64px";
   btn.textContent = read() ? "On" : "Off";
-  if (read()) btn.classList.add("active");
   btn.addEventListener("click", () => {
     const next = !read();
     write(next);
     btn.textContent = next ? "On" : "Off";
-    btn.classList.toggle("active", next);
+    setBtnActive(btn, next);
   });
   row.appendChild(lab);
   row.appendChild(btn);
@@ -223,12 +292,10 @@ function settingToggle(
 }
 
 function settingNumber(label: string, read: () => number, write: (v: number) => void): HTMLElement {
-  const row = document.createElement("div");
-  row.className = "cheetos-setting-row";
-  const lab = document.createElement("label");
+  const row = settingRow();
+  const lab = sty(document.createElement("label"), { fontSize: "13px", color: "#d4d4d8" });
   lab.textContent = label;
-  const input = document.createElement("input");
-  input.className = "cheetos-input";
+  const input = inputEl();
   input.type = "number";
   input.value = String(read());
   input.addEventListener("change", () => {
@@ -241,13 +308,7 @@ function settingNumber(label: string, read: () => number, write: (v: number) => 
 }
 
 function buildSettingsGroup(): HTMLElement {
-  const group = document.createElement("div");
-  group.className = "cheetos-group";
-
-  const title = document.createElement("div");
-  title.className = "cheetos-group-title";
-  title.textContent = "Humanizer";
-  group.appendChild(title);
+  const group = groupEl("Humanizer");
 
   group.appendChild(
     settingToggle(
@@ -275,11 +336,9 @@ function buildSettingsGroup(): HTMLElement {
     settingNumber("Accuracy (%)", () => getSettings().accuracy, (v) => updateSettings({ accuracy: clampInt(v, 1, 100) })),
   );
 
-  const hint = document.createElement("div");
-  hint.className = "cheetos-hint";
-  hint.textContent =
-    "Lower accuracy makes Auto Answer miss occasionally so streaks stay believable. 100% never misses.";
-  group.appendChild(hint);
+  group.appendChild(
+    hintEl("Lower accuracy makes Auto Answer miss occasionally so streaks stay believable. 100% never misses."),
+  );
 
   return group;
 }
@@ -318,68 +377,196 @@ export interface PanelHandle {
 }
 
 export function mountPanel(api: CheatApi): PanelHandle {
-  ensureStyle();
-
   const root = document.createElement("div");
   root.id = "cheetos-root";
 
-  const toggle = document.createElement("button");
+  const toggle = sty(document.createElement("button"), {
+    position: "fixed",
+    right: "14px",
+    bottom: "14px",
+    zIndex: "2147483000",
+    background: C.accent,
+    color: "#fff",
+    border: "none",
+    borderRadius: "999px",
+    padding: "10px 16px",
+    fontSize: "14px",
+    fontWeight: "700",
+    cursor: "pointer",
+    boxShadow: "0 4px 14px rgba(0,0,0,.35)",
+    fontFamily: C.font,
+  });
   toggle.id = "cheetos-toggle";
   toggle.textContent = "Cheetos";
   root.appendChild(toggle);
 
-  const panel = document.createElement("div");
+  const panel = sty(document.createElement("div"), {
+    position: "fixed",
+    top: "12px",
+    right: "12px",
+    zIndex: "2147483001",
+    width: "360px",
+    maxHeight: "84vh",
+    display: "flex",
+    flexDirection: "column",
+    background: C.bg,
+    color: C.text,
+    border: "1px solid " + C.border,
+    borderRadius: "12px",
+    boxShadow: "0 12px 32px rgba(0,0,0,.5)",
+    overflow: "hidden",
+    fontFamily: C.font,
+    fontSize: "13px",
+  });
   panel.id = "cheetos-panel";
 
-  const head = document.createElement("div");
+  const head = sty(document.createElement("div"), {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    padding: "10px 12px",
+    background: C.bg3,
+    cursor: "grab",
+    userSelect: "none",
+  });
   head.id = "cheetos-head";
-  const title = document.createElement("span");
-  title.className = "title";
+
+  const title = sty(document.createElement("span"), {
+    fontWeight: "800",
+    fontSize: "15px",
+    color: C.gold,
+    marginRight: "auto",
+  });
   title.textContent = "Blooket Cheetos";
-  const status = document.createElement("span");
+
+  const status = sty(document.createElement("span"), {
+    fontSize: "10px",
+    fontWeight: "700",
+    padding: "3px 8px",
+    borderRadius: "999px",
+    background: C.border,
+    color: C.muted,
+    whiteSpace: "nowrap",
+  });
   status.id = "cheetos-status";
-  const close = document.createElement("button");
+
+  const close = sty(document.createElement("button"), {
+    background: "none",
+    border: "none",
+    color: C.muted,
+    fontSize: "18px",
+    cursor: "pointer",
+    padding: "0 4px",
+    fontFamily: C.font,
+  });
   close.id = "cheetos-close";
   close.textContent = "\u00d7";
+  close.title = "Hide panel";
+
   head.appendChild(title);
   head.appendChild(status);
   head.appendChild(close);
   panel.appendChild(head);
 
-  const tabs = document.createElement("div");
+  const tabs = sty(document.createElement("div"), {
+    display: "flex",
+    gap: "4px",
+    overflowX: "auto",
+    padding: "8px 10px",
+    background: C.bg2,
+    borderBottom: "1px solid " + C.border,
+  });
   tabs.id = "cheetos-tabs";
   panel.appendChild(tabs);
 
-  const body = document.createElement("div");
+  const body = sty(document.createElement("div"), {
+    overflowY: "auto",
+    padding: "8px 10px 12px",
+    flex: "1 1 auto",
+    minHeight: "0",
+  });
   body.id = "cheetos-body";
   panel.appendChild(body);
+
+  const footer = sty(document.createElement("div"), {
+    padding: "6px 12px",
+    fontSize: "11px",
+    color: C.faint,
+    borderTop: "1px solid " + C.border,
+    background: C.bg2,
+    textAlign: "center",
+  });
+  footer.textContent = "Ctrl+Shift+X hides/shows this panel";
+  panel.appendChild(footer);
+
   root.appendChild(panel);
+
+  const setHidden = (hidden: boolean) => {
+    panel.style.display = hidden ? "none" : "flex";
+  };
+  const togglePanel = () => setHidden(panel.style.display === "none");
+  (window as any).__cheetosShow = () => setHidden(false);
 
   let ctx: AppContext = { kind: "other", modeId: null, modeLabel: null, live: false, signature: "" };
 
   const render = () => {
-    status.className = "";
+    status.style.background = C.border;
+    status.style.color = C.muted;
     if (ctx.kind === "other") {
       status.textContent = "off-site";
     } else if (ctx.kind === "game" && ctx.modeLabel) {
       status.textContent = ctx.live ? ctx.modeLabel + " \u00b7 live" : ctx.modeLabel + " \u00b7 waiting";
-      status.className = ctx.live ? "live" : "waiting";
+      if (ctx.live) {
+        status.style.background = "#14532d";
+        status.style.color = "#86efac";
+      } else {
+        status.style.background = "#451a03";
+        status.style.color = "#fcd34d";
+      }
     } else if (ctx.kind === "lobby") {
       status.textContent = "Lobby";
-      status.className = "waiting";
+      status.style.background = "#451a03";
+      status.style.color = "#fcd34d";
     } else {
       status.textContent = "Dashboard";
-      status.className = "waiting";
+      status.style.background = "#451a03";
+      status.style.color = "#fcd34d";
     }
 
     tabs.replaceChildren();
     const tabDefs = [{ id: "global", label: "General" }, ...MODES.map((m) => ({ id: m.id, label: m.label }))];
     for (const t of tabDefs) {
-      const btn = document.createElement("button");
-      btn.className = "cheetos-tab";
-      if (t.id === selectedTab) btn.classList.add("active");
-      if (ctx.kind === "game" && ctx.live && ctx.modeId === t.id) btn.classList.add("live");
+      const btn = sty(document.createElement("button"), {
+        flex: "0 0 auto",
+        border: "1px solid transparent",
+        background: "transparent",
+        color: C.muted,
+        fontSize: "12px",
+        fontWeight: "700",
+        padding: "5px 10px",
+        borderRadius: "999px",
+        cursor: "pointer",
+        whiteSpace: "nowrap",
+        fontFamily: C.font,
+      });
+      const active = t.id === selectedTab;
+      if (active) {
+        btn.style.background = C.accent;
+        btn.style.color = "#fff";
+      }
+      if (ctx.kind === "game" && ctx.live && ctx.modeId === t.id) {
+        btn.style.borderColor = "#22c55e";
+      }
       btn.textContent = t.label;
+      btn.addEventListener("mouseenter", () => {
+        if (!active) btn.style.background = "#2c2c31";
+      });
+      btn.addEventListener("mouseleave", () => {
+        if (!active) {
+          btn.style.background = "transparent";
+          btn.style.color = C.muted;
+        }
+      });
       btn.addEventListener("click", () => {
         selectedTab = t.id;
         render();
@@ -389,10 +576,7 @@ export function mountPanel(api: CheatApi): PanelHandle {
 
     body.replaceChildren();
     if (ctx.kind === "other") {
-      const note = document.createElement("div");
-      note.className = "cheetos-note";
-      note.textContent = "Run the bookmark on a blooket.com page \u2014 dashboard, join screen, or a live game.";
-      body.appendChild(note);
+      body.appendChild(noteEl("Run the bookmark on a blooket.com page \u2014 dashboard, join screen, or a live game."));
       return;
     }
     body.appendChild(buildTabContent(ctx, api, render));
@@ -407,8 +591,16 @@ export function mountPanel(api: CheatApi): PanelHandle {
     render();
   };
 
-  toggle.addEventListener("click", () => panel.classList.toggle("hidden"));
-  close.addEventListener("click", () => panel.classList.add("hidden"));
+  toggle.addEventListener("click", togglePanel);
+  close.addEventListener("click", () => setHidden(true));
+
+  window.addEventListener("keydown", (e) => {
+    if (e.ctrlKey && e.shiftKey && (e.key === "X" || e.key === "x")) {
+      e.preventDefault();
+      e.stopPropagation();
+      togglePanel();
+    }
+  });
 
   document.body.appendChild(root);
   makeDraggable(panel, head);

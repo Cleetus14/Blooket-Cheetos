@@ -4,7 +4,10 @@ import { detectContext } from "./core/context";
 import { mountPanel } from "./ui/gui";
 
 export function bootstrap(): void {
-  if ((window as any).__cheetosLoaded) return;
+  if ((window as any).__cheetosLoaded) {
+    (window as any).__cheetosShow?.();
+    return;
+  }
   (window as any).__cheetosLoaded = true;
 
   installAntiCheatPatch();
