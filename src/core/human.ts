@@ -24,10 +24,6 @@ export function shouldMiss(accuracy: number): boolean {
 
 let lastVisualSig = "";
 
-// Humanized typing answer: the real submission is ALWAYS the game's own
-// sendAnswer (reference-exact, instant), so the answer lands every time. The
-// character-by-character input fill is purely cosmetic and never gates or
-// delays the submission.
 export async function typeAnswerHuman(answer: string): Promise<boolean> {
   const s = getSettings();
   const wrapper: any = document.querySelector("[class*='typingAnswerWrapper']");

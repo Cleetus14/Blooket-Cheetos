@@ -13,29 +13,103 @@ const GAME_IDS = [
   "5ff767051b68750004a6fd21", "5fdcacc85d465a0004b021b9", "5fb7eea20bd44300045ba495",
 ];
 
+type Logger = (msg: string) => void;
+
+async function addTokensReward(tokens: number, xp: number, log: Logger): Promise<void> {
+  const rand = (l: number, h: number) => Math.floor(Math.random() * (h - l + 1)) + l;
+  const gameId = GAME_IDS[Math.floor(Math.random() * GAME_IDS.length)];
+  let base: Window | null = window;
+  let frame: HTMLIFrameElement | null = null;
+
+  if (window.location.hostname.toLowerCase() !== "play.blooket.com") {
+    frame = document.createElement("iframe");
+    frame.style.display = "none";
+    frame.src = "https://play.blooket.com/";
+    document.body.appendChild(frame);
+    await new Promise<void>((resolve) => {
+      const done = () => resolve();
+      frame!.onload = () => done();
+      frame!.onerror = () => done();
+      setTimeout(done, 8000);
+    });
+    base = frame.contentWindow;
+    if (!base) {
+      frame.remove();
+      log("Add Tokens failed: could not open play.blooket.com");
+      return;
+    }
+  }
+
+  const fetchJson = async (path: string, init: RequestInit): Promise<any> => {
+    try {
+      const r = await base!.fetch(path, { credentials: "include", ...init });
+      return await r.json();
+    } catch {
+      return null;
+    }
+  };
+
+  try {
+    const session = await fetchJson("https://play.blooket.com/api/playersessions/solo", {
+      body: JSON.stringify({ gameMode: "Factory", questionSetId: gameId }),
+      method: "POST",
+    });
+    const t = session?.t;
+    if (!t) throw new Error("could not create solo session");
+    await fetchJson("https://play.blooket.com/api/playersessions/landings", {
+      body: JSON.stringify({ t }),
+      method: "POST",
+    });
+    await fetchJson("https://play.blooket.com/api/playersessions/questions?t=" + t, {});
+    await fetchJson("https://play.blooket.com/api/gamequestionsets?gameId=" + gameId, {});
+    await fetchJson("https://play.blooket.com/api/users/factorystats", {
+      body: JSON.stringify({
+        t,
+        place: 1,
+        cash: rand(10000000, 100000000),
+        playersDefeated: 0,
+        correctAnswers: rand(500, 2000),
+        upgrades: rand(250, 750),
+        blookUsed: "Chick",
+        nameUsed: "You",
+        mode: "Time-Solo",
+      }),
+      method: "PUT",
+    });
+    const res = await fetchJson("https://play.blooket.com/api/users/add-rewards", {
+      body: JSON.stringify({ t, addedTokens: tokens, addedXp: xp }),
+      method: "PUT",
+    });
+    log(
+      "Added " + tokens + " tokens and " + xp + " XP" +
+        (res?.dailyReward ? " (+daily wheel: " + res.dailyReward + ")" : "") + ".",
+    );
+  } catch (err) {
+    log("Add Tokens failed: " + (err as Error).message);
+  } finally {
+    if (frame) frame.remove();
+  }
+}
+
 export const globalCheats: CheatDef[] = [
   {
     id: "global-auto-answer",
     label: "Auto Answer",
     group: "Global",
     kind: "toggle",
-    description: "Answers using the game's own live state (reference approach). Humanizer only adds optional pacing \u2014 it can't block the answer.",
+    description: "Answers automatically from the live game state. Humanizer only adds optional pacing.",
     run(api) {
       return api.interval(() => {
         const node = api.node();
         if (!node) return;
         const state = node.state ?? {};
-
-        // Reference order: live state.question first, then props.client.question.
         const q = state.question ?? node.props?.client?.question ?? null;
         if (!q || !Array.isArray(q.answers) || !q.answers.length) return;
 
         if (q.qType !== "typing") {
           if (state.stage === "feedback" || state.feedback) {
-            // Reference: click the continue element every tick.
             clickFeedbackAdvance();
           } else {
-            // Reference: index of the first answer present in correctAnswers.
             let ind = -1;
             for (let i = 0; i < q.answers.length; i++) {
               let found = false;
@@ -53,7 +127,6 @@ export const globalCheats: CheatDef[] = [
             if (ind >= 0) clickAnswerContainerAt(ind, q.answers[ind]);
           }
         } else {
-          // Reference: submit through the wrapper's own sendAnswer.
           void typeAnswerHuman(q.answers[0]);
         }
       }, 50);
@@ -87,13 +160,11 @@ export const globalCheats: CheatDef[] = [
     label: "Every Answer Correct",
     group: "Global",
     kind: "toggle",
-    description: "Marks every answer in the set correct as questions load (reference approach: live arrays patched in place + forceUpdate).",
+    description: "Marks every answer in the set correct as questions load.",
     run(api) {
       return api.interval(() => {
         const node = api.node();
         if (!node) return;
-        // Reference: patch the live lists in place with the same answers array
-        // (unconditional, exactly like the reference), then forceUpdate.
         const lists = [node.freeQuestions, node.questions, node.props?.client?.questions];
         for (const list of lists) {
           if (!Array.isArray(list)) continue;
@@ -102,7 +173,6 @@ export const globalCheats: CheatDef[] = [
             if (q && Array.isArray(q.answers)) q.correctAnswers = q.answers;
           }
         }
-        // Current question (reference order: state first).
         const cur = node.state?.question ?? node.props?.client?.question;
         if (cur && Array.isArray(cur.answers)) cur.correctAnswers = cur.answers;
         try {
@@ -240,60 +310,7 @@ export const globalCheats: CheatDef[] = [
         api.log("Add Tokens works on any blooket.com page (dashboard, lobby, or a live game).");
         return;
       }
-      void (async () => {
-        try {
-          const rand = (l: number, h: number) => Math.floor(Math.random() * (h - l + 1)) + l;
-          const gameId = GAME_IDS[Math.floor(Math.random() * GAME_IDS.length)];
-          const session = await fetch("https://play.blooket.com/api/playersessions/solo", {
-            body: JSON.stringify({ gameMode: "Factory", questionSetId: gameId }),
-            method: "POST",
-            credentials: "include",
-          })
-            .then((r) => r.json())
-            .catch(() => null);
-          const t = session?.t;
-          if (!t) throw new Error("could not create solo session");
-          await fetch("https://play.blooket.com/api/playersessions/landings", {
-            body: JSON.stringify({ t }),
-            method: "POST",
-            credentials: "include",
-          }).catch(() => null);
-          await fetch("https://play.blooket.com/api/playersessions/questions?t=" + t, {
-            credentials: "include",
-          }).catch(() => null);
-          await fetch("https://play.blooket.com/api/gamequestionsets?gameId=" + gameId, {
-            credentials: "include",
-          }).catch(() => null);
-          await fetch("https://play.blooket.com/api/users/factorystats", {
-            body: JSON.stringify({
-              t,
-              place: 1,
-              cash: rand(10000000, 100000000),
-              playersDefeated: 0,
-              correctAnswers: rand(500, 2000),
-              upgrades: rand(250, 750),
-              blookUsed: "Chick",
-              nameUsed: "You",
-              mode: "Time-Solo",
-            }),
-            method: "PUT",
-            credentials: "include",
-          }).catch(() => null);
-          const res = await fetch("https://play.blooket.com/api/users/add-rewards", {
-            body: JSON.stringify({ t, addedTokens: tokens, addedXp: xp }),
-            method: "PUT",
-            credentials: "include",
-          })
-            .then((r) => r.json())
-            .catch(() => null);
-          api.log(
-            "Added " + tokens + " tokens and " + xp + " XP" +
-              (res?.dailyReward ? " (+daily wheel: " + res.dailyReward + ")" : "") + ".",
-          );
-        } catch (err) {
-          api.log("Add Tokens failed: " + (err as Error).message);
-        }
-      })();
+      void addTokensReward(tokens, xp, api.log);
     },
   },
   {

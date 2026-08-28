@@ -11,9 +11,6 @@ export interface AppContext {
   signature: string;
 }
 
-// Blooket now serves each game mode on its own subdomain
-// (e.g. gold.blooket.com/<session>/play/<game>). The old /play/<mode>
-// path routes still exist for a few legacy links, so both are matched.
 const SUBDOMAIN_MODES: Record<string, string> = {
   gold: "gold",
   crypto: "crypto",
@@ -138,8 +135,6 @@ function isQuizPath(path: string): boolean {
 
 function looksLive(): boolean {
   const d = gameDocument();
-  // Class names on the current Blooket frontend are hashed/renamed, so match
-  // broadly: any element whose class contains an answer/question/game marker.
   const markers = [
     "[class*='answer']", "[class*='question']", "[class*='choice']",
     "[class*='feedback']", "[class*='gold']", "[class*='crypto']",
@@ -153,9 +148,6 @@ function looksLive(): boolean {
   return !!d.querySelector("canvas");
 }
 
-// On the new frontend every live game URL looks like
-// `<mode>.blooket.com/<session>/play/<game>`, so the path itself is a strong
-// live signal even before the React tree is fully scanned.
 function pathLooksLive(): boolean {
   const path = window.location.pathname.toLowerCase();
   return path.includes("/play/") || path.includes("/game/");

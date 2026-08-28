@@ -1,10 +1,3 @@
-// Runtime simulation test: boots the real bundle against a fake Blooket-like
-// DOM that models the ACTUAL reference structure — the game is a React class
-// component reachable through
-//   Object.values(body>div)[1].children[0]._owner.stateNode
-// exactly like the reference getStateNode. It then drives the real cheat code
-// (auto answer, every-answer-correct, gold auto choose, kick) and verifies the
-// Ctrl+Shift+X/E hotkey toggles the panel.
 import { build } from "esbuild";
 import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
@@ -14,8 +7,8 @@ import { fileURLToPath } from "url";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const tmp = mkdtempSync(join(tmpdir(), "cheetos-runtime-"));
 
-const consoleLogs = [];
 const origLog = console.log;
+const consoleLogs = [];
 console.log = (...args) => {
   consoleLogs.push(args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" "));
 };
@@ -47,11 +40,6 @@ class FakeClassList {
   }
 }
 
-// A DOM element whose standard properties are non-enumerable, matching the
-// real DOM. Real React attaches `__reactInternalInstance$...` and
-// `__reactProps$...` as OWN ENUMERABLE props, which is what the reference
-// `Object.values(el)[1]` reads. Keeping our fake DOM props non-enumerable
-// makes `Object.values(el)` behave exactly like the real Blooket page.
 class FakeEl {
   constructor(tag) {
     Object.defineProperty(this, "tagName", { value: String(tag).toUpperCase(), writable: true, enumerable: false });
@@ -100,6 +88,10 @@ class FakeEl {
     return { left: 0, top: 0, right: 100, bottom: 20, width: 100, height: 20 };
   }
   setPointerCapture() {}
+  remove() {
+    const p = this.parentNode;
+    if (p) p.children = p.children.filter((c) => c !== this);
+  }
 }
 
 const elementsById = new Map();
@@ -109,6 +101,7 @@ const fakeDocument = {
   answerContainers: [],
   feedbackEl: null,
   typingWrapper: null,
+  domRoots: [],
   createElement(tag) {
     const el = new FakeEl(tag);
     if (el.id) elementsById.set(el.id, el);
@@ -125,6 +118,7 @@ const fakeDocument = {
   },
   querySelectorAll(sel) {
     if (sel === "iframe") return this.iframes;
+    if (sel === "body *") return this.domRoots;
     if (sel.includes("answerContainer")) return this.answerContainers;
     return [];
   },
@@ -135,6 +129,7 @@ fakeDocument.body = fakeDocument.createElement("body");
 elementsById.set("body", fakeDocument.body);
 
 let setValCalls = [];
+let chooseCalls = [];
 const gameInst = {
   state: {
     gold: 200,
@@ -173,16 +168,40 @@ const gameInst = {
   },
 };
 
-const chooseCalls = [];
+const typingAnswers = [];
+const typingInst = { sendAnswer: (text) => typingAnswers.push(text) };
+const typingWrapperEl = fakeDocument.createElement("div");
 
-// Build the reference structure on the root div:
-//   Object.values(root)[1].children[0]._owner.stateNode === gameInst
-const gameDiv = fakeDocument.createElement("div");
-gameDiv.__reactInternalInstance$test = { dummy: true }; // index 0
-gameDiv.__reactProps$test = { children: [{ _owner: { stateNode: gameInst } }] }; // index 1
-fakeDocument.body.children.push(gameDiv);
+const container = fakeDocument.createElement("div");
 
-// Answer containers for the reference auto-answer click.
+const hostRoot = { tag: 3, stateNode: container, child: null, sibling: null, return: null, alternate: null };
+const appFiber = { tag: 0, stateNode: null, child: null, sibling: null, return: null, alternate: null };
+const gameFiber = { tag: 1, stateNode: gameInst, child: null, sibling: null, return: null, alternate: null };
+const screenHost = { tag: 5, stateNode: fakeDocument.createElement("div"), child: null, sibling: null, return: null, alternate: null };
+const typingComp = { tag: 1, stateNode: typingInst, child: null, sibling: null, return: null, alternate: null };
+const typingHost = { tag: 5, stateNode: typingWrapperEl, child: null, sibling: null, return: null, alternate: null };
+const decoyHost = { tag: 5, stateNode: fakeDocument.createElement("input"), child: null, sibling: null, return: null, alternate: null };
+decoyHost.stateNode.type = "checkbox";
+
+hostRoot.child = appFiber;
+appFiber.return = hostRoot;
+appFiber.child = gameFiber;
+gameFiber.return = appFiber;
+gameFiber.child = screenHost;
+screenHost.return = gameFiber;
+screenHost.child = typingComp;
+typingComp.return = screenHost;
+typingComp.child = typingHost;
+typingHost.return = typingComp;
+typingHost.sibling = decoyHost;
+decoyHost.return = screenHost;
+
+container.__reactContainer$prod = hostRoot;
+fakeDocument.body.children.push(container);
+fakeDocument.domRoots = [container];
+
+fakeDocument.typingWrapper = typingWrapperEl;
+
 const clickedContainers = [];
 for (let i = 0; i < 3; i++) {
   const el = fakeDocument.createElement("div");
@@ -193,13 +212,6 @@ for (let i = 0; i < 3; i++) {
 
 const feedbackClicks = [];
 fakeDocument.feedbackEl = { firstChild: { click: () => feedbackClicks.push(1) } };
-
-const typingAnswers = [];
-fakeDocument.typingWrapper = fakeDocument.createElement("div");
-fakeDocument.typingWrapper.__reactInternalInstance$t = { dummy: true };
-fakeDocument.typingWrapper.__reactProps$t = {
-  children: { _owner: { stateNode: { sendAnswer: (text) => typingAnswers.push(text) } } },
-};
 
 const fakeWindow = {
   location: {
@@ -274,12 +286,9 @@ await build({
 
 await import(outfile);
 
-// ---------------------------------------------------------------------------
-// Reference state node detection (the only path the reference cheats use)
-// ---------------------------------------------------------------------------
 const api = fakeWindow.cheetos;
 assert(!!api, "api exposed on window.cheetos");
-assert(!!api.node(), "reference _owner.stateNode found");
+assert(!!api.node(), "game instance found via fiber walk");
 assert(api.client().name === "TestPlayer", "client name readable");
 assert(api.state().gold === 200, "state readable");
 assert(api.question()?.question === "What is 2+2?", "live question readable");
@@ -300,19 +309,13 @@ assert(panel.style.display !== "none", "panel visible by default");
 const status = panel.children[0]?.children.find((c) => c.id === "cheetos-status");
 assert(status?.textContent === "Gold Quest \u00b7 live", "status chip reports live game, got: " + status?.textContent);
 
-// ---------------------------------------------------------------------------
-// Hotkey toggling (the reported bug)
-// ---------------------------------------------------------------------------
 const visibleBefore = panel.style.display;
 hotkey("KeyX");
 assert(panel.style.display !== visibleBefore, "Ctrl+Shift+X toggled the panel");
-await sleep(150); // the hotkey has a 120ms double-fire debounce; respect it
+await sleep(150);
 hotkey("KeyE");
 assert(panel.style.display === visibleBefore, "Ctrl+Shift+E toggled it back");
 
-// ---------------------------------------------------------------------------
-// Every Answer Correct
-// ---------------------------------------------------------------------------
 const eacHandle = api.runCheat("global-every-correct");
 assert(!!eacHandle, "every-answer-correct starts");
 await sleep(700);
@@ -326,9 +329,6 @@ assert(
 );
 eacHandle.stop();
 
-// ---------------------------------------------------------------------------
-// Auto Answer (reference-exact: answerContainer click + feedback + typing)
-// ---------------------------------------------------------------------------
 gameInst.state.stage = "question";
 gameInst.state.question = {
   qType: "mc",
@@ -342,13 +342,10 @@ assert(!!aaHandle, "auto-answer starts");
 await sleep(400);
 assert(clickedContainers.includes(1), "correct answerContainer clicked (index 1), got [" + clickedContainers.join(",") + "]");
 
-// Feedback screen: continue element clicked automatically.
-// (state.question is intentionally kept — real Blooket keeps it during feedback)
 gameInst.state.stage = "feedback";
 await sleep(400);
 assert(feedbackClicks.length >= 1, "feedback continue clicked");
 
-// Typing question: submitted via the wrapper's sendAnswer.
 gameInst.state.stage = "question";
 gameInst.state.question = {
   qType: "typing",
@@ -360,18 +357,15 @@ await sleep(400);
 assert(typingAnswers.includes("hello"), "typing answer sent via sendAnswer");
 aaHandle.stop();
 
-// ---------------------------------------------------------------------------
-// Gold Auto Choose (reference-exact: click div[class*='choiceN'])
-// ---------------------------------------------------------------------------
+const choiceClicks = [];
 fakeDocument.querySelector = (sel) => {
-  if (sel === "body>div") return gameDiv;
+  if (sel === "body>div") return container;
   if (sel.includes("feedback")) return fakeDocument.feedbackEl;
   if (sel.includes("typingAnswerWrapper")) return fakeDocument.typingWrapper;
   if (sel.includes("choice2")) return { click: () => choiceClicks.push(2) };
   if (sel.includes("choice1")) return { click: () => choiceClicks.push(1) };
   return null;
 };
-const choiceClicks = [];
 gameInst.state.stage = "prize";
 gameInst.state.gold = 200;
 gameInst.state.choices = [
@@ -382,13 +376,9 @@ await settle();
 const acHandle = api.runCheat("gold-auto-choose");
 assert(!!acHandle, "gold-auto-choose starts");
 await sleep(700);
-// Best value: multiply 200 -> 400 beats gold+100 -> 300, so index 1 (choice2).
-assert(choiceClicks.includes(2), "auto-choose clicked choice2 (the best chest), got [" + choiceClicks.join(",") + "]");
+assert(choiceClicks.includes(2), "auto-choose clicked choice2 (best chest), got [" + choiceClicks.join(",") + "]");
 acHandle.stop();
 
-// ---------------------------------------------------------------------------
-// Kick Player tries every removal hook + node delete
-// ---------------------------------------------------------------------------
 const kicked = [];
 gameInst.props.liveGameController.removePlayer = (name) => kicked.push(name);
 await settle();
@@ -398,6 +388,13 @@ assert(
   "kick tries removePlayer + node delete, got " + attempts.join(","),
 );
 assert(kicked.includes("Victim"), "removePlayer called with the target name");
+
+delete container.__reactContainer$prod;
+container.aa = {};
+container.bb = { children: [{ _owner: { stateNode: gameInst } }] };
+await sleep(600);
+assert(!!api.node(), "legacy _owner.stateNode fallback finds the game");
+assert(api.client().name === "TestPlayer", "legacy fallback client readable");
 
 console.log = origLog;
 if (failures) {

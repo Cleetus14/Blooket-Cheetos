@@ -6,10 +6,7 @@ import { dirname, resolve } from "path";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const watching = process.argv.includes("--watch");
 
-// Blooket serves a strict Content Security Policy that blocks externally hosted
-// <script src> tags (both GitHub Pages and CDNs get refused). Bookmarklet code
-// itself is exempt from that CSP in Chromium, so the entire bundle is packed
-// into the bookmark URL. Nothing is ever loaded from the network at runtime.
+// CSP blocks external scripts, so the bundle ships inline in the bookmark URL.
 function makeBookmarklet() {
   const code = readFileSync(resolve(root, "dist/cheetos.js"), "utf8").trim();
   const encoded = encodeURIComponent(code).replace(/'/g, "%27");

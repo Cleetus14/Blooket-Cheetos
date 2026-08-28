@@ -279,7 +279,6 @@ export const goldQuestCheats: CheatDef[] = [
           });
           if (bestIdx < 0) return;
           pickedSig = sig;
-          // Reference-exact: click the chest's DOM element by its 1-based class.
           const el = document.querySelector(
             `div[class*='choice${bestIdx + 1}']`,
           ) as HTMLElement | null;
@@ -287,15 +286,13 @@ export const goldQuestCheats: CheatDef[] = [
             el.click();
             return;
           }
-          // Fallback: the game's own pick handler (0-based), same call the
-          // chest onClick makes.
           const n3 = api.node();
           if (typeof n3?.choosePrize === "function") {
             n3.choosePrize(bestIdx);
             return;
           }
           const text = choices[bestIdx]?.text;
-          if (!text || !clickChoiceByText(text)) pickedSig = ""; // allow retry
+          if (!text || !clickChoiceByText(text)) pickedSig = "";
         });
       }, 50);
     },

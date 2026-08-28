@@ -1,11 +1,5 @@
 import type { Question } from "../types";
-import { allDocuments, gameDocument } from "./state";
-
-// The current Blooket frontend hashes/renames its CSS classes, so the old
-// `[class*='answerContainer']` selectors may match nothing. Every helper here
-// falls back to text-based matching: find a clickable element whose text
-// content equals the answer text. All queries run against the document that
-// actually hosts the game (top page or a same-origin iframe).
+import { allDocuments, gameDocument, findInstanceWithMethod } from "./state";
 
 function doc(): Document {
   return gameDocument();
@@ -22,9 +16,6 @@ function findAnswerByText(text: string): HTMLElement | null {
   const candidates = Array.from(
     doc().querySelectorAll("div,button,span,p,[role='button']"),
   ) as HTMLElement[];
-  // Prefer elements that look interactive (role=button, button tags, cursor
-  // pointers) and whose text exactly matches, then fall back to any match,
-  // then to short elements that merely contain the answer text.
   for (const el of candidates) {
     if (!textMatches(el, text)) continue;
     const style = getComputedStyle(el);
@@ -58,14 +49,12 @@ function findAnswerByText(text: string): HTMLElement | null {
 
 export function clickAnswer(question: Question, index: number): boolean {
   const answer = question.answers[index];
-  // Primary path: the old selector still works on older Blooket builds.
   const nodes = doc().querySelectorAll("[class*='answerContainer']");
   const el = nodes[index] as HTMLElement | undefined;
   if (el) {
     el.click();
     return true;
   }
-  // Fallback: match by text content.
   const byText = findAnswerByText(answer);
   if (byText) {
     byText.click();
@@ -83,10 +72,6 @@ export function randomWrongIndex(question: Question): number {
   return wrong[Math.floor(Math.random() * wrong.length)];
 }
 
-// True when the current question's prompt text is actually visible on the
-// page. On the hashed-class frontend this is the reliable way to tell "the
-// question is on screen" apart from the chest/lobby/feedback screens, so
-// auto answer doesn't click random elements between questions.
 let questionScreenCache: { sig: string; at: number; visible: boolean } | null = null;
 
 export function isQuestionOnScreen(question: Question): boolean {
@@ -140,10 +125,6 @@ export function clickCorrect(question: Question): boolean {
   return false;
 }
 
-// Reference-exact answer click: `[class*='answerContainer']` at the same
-// index as the answer, tried on every same-origin document (top page first).
-// This is the exact selector the reference autoAnswer uses. Text-based
-// fallback covers builds where the class was renamed.
 export function clickAnswerContainerAt(index: number, fallbackText?: string): boolean {
   for (const doc of allDocuments()) {
     try {
@@ -167,8 +148,6 @@ export function clickAnswerContainerAt(index: number, fallbackText?: string): bo
   return false;
 }
 
-// Reference-exact feedback advance: click the first child of the feedback
-// element (the continue button), tried on every same-origin document.
 export function clickFeedbackAdvance(): boolean {
   for (const doc of allDocuments()) {
     try {
@@ -189,7 +168,6 @@ function typingInput(): HTMLInputElement | null {
   const wrapper: any = doc().querySelector("[class*='typingAnswerWrapper']");
   const input = wrapper?.querySelector("input, textarea");
   if (input) return input as HTMLInputElement;
-  // Fallback: the first visible text input on the page (new frontend).
   const inputs = Array.from(doc().querySelectorAll("input[type='text'], input:not([type]), textarea")) as HTMLInputElement[];
   for (const el of inputs) {
     const r = el.getBoundingClientRect();
@@ -199,8 +177,6 @@ function typingInput(): HTMLInputElement | null {
 }
 
 export function typingStateNode(wrapper: any): any {
-  // React 16/17 route via _owner (reference approach), React 18 route via
-  // the fiber tree. children may be a single element or an array.
   let node: any = null;
   const values = Object.values(wrapper) as any[];
   const kids = values[1]?.children;
@@ -235,6 +211,7 @@ export function typingStateNode(wrapper: any): any {
       if (node) break;
     }
   }
+  if (!node) node = findInstanceWithMethod("sendAnswer");
   return node;
 }
 
@@ -247,7 +224,6 @@ export function submitTyping(answer: string): boolean {
       return true;
     }
   }
-  // Text fallback: type into the visible input and submit with Enter.
   const input = typingInput();
   if (input) {
     const proto =
@@ -271,7 +247,6 @@ export function advanceFeedback(): boolean {
     child.click();
     return true;
   }
-  // Fallback: click a Continue / Next / arrow button by text.
   const labels = ["continue", "next", "ok", "got it", "let's go", "onward"];
   const buttons = Array.from(
     doc().querySelectorAll("button, div[role='button'], [class*='button']"),

@@ -8,15 +8,10 @@ import { VERSION } from "./version";
 export function bootstrap(): void {
   const loaded = !!(window as any).__cheetosLoaded;
   if (loaded && (window as any).__cheetosVersion === VERSION) {
-    // Same build already mounted on this page: just surface the panel.
     (window as any).__cheetosShow?.();
     return;
   }
   if (loaded) {
-    // A different (older) build is mounted on this page. Tear it down so its
-    // stale panel, hotkey listeners, and running toggles can't fight the new
-    // build (this is what happens when an old bookmarklet is re-run after an
-    // update without refreshing the page).
     try {
       (window as any).__cheetosTeardown?.();
     } catch {

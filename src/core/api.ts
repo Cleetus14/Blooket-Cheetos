@@ -6,8 +6,6 @@ import { MODES, globalCheats } from "../modes";
 
 export function createApi(): CheatApi {
   const node = () => findStateNode();
-  // The reference never wraps the game node; it reads/writes straight through
-  // `stateNode.props.liveGameController`. Keep a tiny helper for that.
   const controller = () => node()?.props?.liveGameController ?? null;
 
   const api: CheatApi = {
@@ -15,7 +13,6 @@ export function createApi(): CheatApi {
     state: () => node()?.state ?? {},
     client: () => node()?.props?.client ?? {},
     setState: (patch) => node()?.setState?.(patch),
-    // Reference-exact write: liveGameController.setVal({ path, val }).
     setVal: (path, val) => {
       const c = controller();
       if (!c || typeof c.setVal !== "function") return;
@@ -29,7 +26,6 @@ export function createApi(): CheatApi {
         }
       }
     },
-    // Reference-exact read: liveGameController.getDatabaseVal(path, cb).
     getVal: (path, cb) => {
       const c = controller();
       const fn = c?.getDatabaseVal ?? c?.getVal;
@@ -41,7 +37,6 @@ export function createApi(): CheatApi {
         /* ignore */
       }
     },
-    // Reference order: state.question first, then props.client.question.
     question: (): Question | null => {
       const n = node();
       return n?.state?.question ?? n?.props?.client?.question ?? null;
@@ -59,9 +54,6 @@ export function createApi(): CheatApi {
       return q ? submitTyping(q.answers[0]) : false;
     },
     advance: () => advanceFeedback(),
-    // Blooket has no host-kick protocol, so this tries every removal hook the
-    // game might expose and then deletes the player's node. Returns the list
-    // of strategies that were attempted so the caller can report them.
     kickPlayer: (name: string) => {
       const n = node();
       if (!n) return [];
@@ -96,8 +88,6 @@ export function createApi(): CheatApi {
       return attempts;
     },
     interval: makeInterval,
-    // Run any cheat by id from the console (useful for testing or keybinds).
-    // Toggles return a handle you can .stop(); actions return true.
     runCheat: (id, args) => {
       const def = [...MODES.flatMap((m) => m.cheats), ...globalCheats].find(
         (c) => c.id === id,

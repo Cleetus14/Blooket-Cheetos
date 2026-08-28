@@ -429,6 +429,17 @@ function makeDraggable(panel: HTMLElement, handle: HTMLElement): void {
   handle.addEventListener("touchend", () => end());
 }
 
+function injectStyles(): void {
+  if (!document.head || document.getElementById("cheetos-style")) return;
+  const style = document.createElement("style");
+  style.id = "cheetos-style";
+  style.textContent =
+    "#cheetos-body::-webkit-scrollbar{width:8px}" +
+    "#cheetos-body::-webkit-scrollbar-track{background:#202024}" +
+    "#cheetos-body::-webkit-scrollbar-thumb{background:#3f3f46;border-radius:4px}";
+  document.head.appendChild(style);
+}
+
 export interface PanelHandle {
   root: HTMLElement;
   update(ctx: AppContext): void;
@@ -437,6 +448,7 @@ export interface PanelHandle {
 }
 
 export function mountPanel(api: CheatApi): PanelHandle {
+  injectStyles();
   const root = document.createElement("div");
   root.id = "cheetos-root";
 
@@ -532,8 +544,8 @@ export function mountPanel(api: CheatApi): PanelHandle {
 
   const tabs = sty(document.createElement("div"), {
     display: "flex",
+    flexWrap: "wrap",
     gap: "4px",
-    overflowX: "auto",
     padding: "8px 10px",
     background: C.bg2,
     borderBottom: "1px solid " + C.border,
@@ -660,9 +672,6 @@ export function mountPanel(api: CheatApi): PanelHandle {
   title.title = "Click to hide/show this panel";
   title.addEventListener("click", togglePanel);
 
-  // --- Hotkey: bind on every same-origin document (top + iframes), on
-  // window / document / body, in both capture and bubble phases, so Blooket
-  // or an iframe with focus can never swallow Ctrl+Shift+X / Ctrl+Shift+E.
   const hotkeyTargets = new WeakSet<object>();
   let lastHotkey = 0;
   const onHotkey = (e: KeyboardEvent) => {
@@ -671,9 +680,6 @@ export function mountPanel(api: CheatApi): PanelHandle {
     const isMod = key === "shift" || key === "control" || key === "alt" || key === "meta";
     const isToggle = key === "keyx" || key === "x" || key === "keye" || key === "e";
     if (e.repeat) return;
-    // Always report the combo so a broken hotkey is diagnosable: if you see
-    // this line but no "panel shown/hidden", the toggle failed; if you see
-    // nothing at all, the keydown never reached the script.
     if (!isMod) {
       console.log(
         "%c[Cheetos]%c hotkey: ctrl+shift+" + key,
@@ -714,8 +720,6 @@ export function mountPanel(api: CheatApi): PanelHandle {
     }
   };
   bindHotkeys();
-  // Blooket may create new same-origin iframes as you navigate modes; keep
-  // re-binding so a freshly focused frame can't swallow the hotkey.
   setInterval(bindHotkeys, 2000);
 
   const teardown = (): void => {
