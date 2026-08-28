@@ -1,7 +1,5 @@
 import type { CheatDef } from "../types";
-import { randomDelay } from "../core/human";
 import { clickChoiceByText } from "../core/dom";
-import { getSettings } from "../core/settings";
 
 function findPlayer(players: Record<string, any>, name: string): [string, any] | null {
   const key = Object.keys(players).find((k) => k.toLowerCase() === name.toLowerCase());
@@ -300,9 +298,9 @@ export const goldQuestCheats: CheatDef[] = [
             const text = choices[bestIdx]?.text;
             if (!text || !clickChoiceByText(text)) pickedSig = ""; // allow retry
           };
-          const s = getSettings();
-          if (s.delays) setTimeout(pick, randomDelay(s.minDelay, s.maxDelay));
-          else pick();
+          // Instant pick through the game's own handler; the humanizer only
+          // applies to answering, not chest picking, so this never feels slow.
+          pick();
         });
       }, 150);
     },

@@ -104,11 +104,15 @@ const fakeDocument = {
   getElementById(id) {
     return elementsById.get(id) || null;
   },
-  querySelector() {
+  querySelector(sel) {
+    if (sel === "body>div") return this.body.children[0] || null;
+    if (sel.includes("feedback")) return this.feedbackEl || null;
+    if (sel.includes("typingAnswerWrapper")) return this.typingWrapper || null;
     return null;
   },
   querySelectorAll(sel) {
     if (sel === "iframe") return this.iframes;
+    if (sel.includes("answerContainer")) return this.answerContainers || [];
     return [];
   },
   addEventListener() {},
@@ -507,6 +511,99 @@ assert(
   "I: kick tries removePlayer + node delete, got " + attempts.join(","),
 );
 assert(kicked.includes("Victim"), "I: removePlayer called with the target name");
+
+// ---------------------------------------------------------------------------
+// Scenario J: Auto Answer runs the reference-exact path — fresh _owner
+// stateNode grab, [class*='answerContainer'] click at the correct index,
+// feedback auto-advance, and typing sendAnswer — with the humanizer off it
+// answers instantly and cannot be blocked by DOM text gating.
+// ---------------------------------------------------------------------------
+fakeDocument.body.children = [];
+const clickedContainers = [];
+const answerEls = [];
+for (let i = 0; i < 3; i++) {
+  const el = fakeDocument.createElement("div");
+  el.classList.add("answerContainer");
+  el.click = () => {
+    clickedContainers.push(i);
+  };
+  answerEls.push(el);
+}
+fakeDocument.answerContainers = answerEls;
+
+const feedbackClicks = [];
+fakeDocument.feedbackEl = { firstChild: { click: () => feedbackClicks.push(1) } };
+
+const typingAnswers = [];
+fakeDocument.typingWrapper = fakeDocument.createElement("div");
+fakeDocument.typingWrapper.__reactFiber$test = {
+  stateNode: null,
+  child: {
+    stateNode: { sendAnswer: (text) => typingAnswers.push(text) },
+    child: null,
+    sibling: null,
+  },
+  sibling: null,
+  return: null,
+};
+
+const jState = {
+  stage: "question",
+  question: {
+    qType: "mc",
+    question: "What is 2+2?",
+    answers: ["3", "4", "5"],
+    correctAnswers: ["4"],
+  },
+};
+const jInst = {
+  state: jState,
+  props: {
+    client: { name: "JPlayer" },
+    liveGameController: { setVal() {}, getDatabaseVal() {} },
+  },
+  setState(patch) {
+    Object.assign(this.state, patch);
+  },
+  forceUpdate() {},
+};
+const jDiv = fakeDocument.createElement("div");
+jDiv.__reactProps$test = { children: [{ _owner: { stateNode: jInst } }] };
+fakeDocument.body.children.push(jDiv);
+
+await settle();
+const aaHandle = api.runCheat("global-auto-answer");
+assert(!!aaHandle, "J: auto-answer starts");
+await sleep(400);
+assert(
+  clickedContainers.includes(1),
+  "J: correct answerContainer clicked (index 1), got [" + clickedContainers.join(",") + "]",
+);
+
+// Feedback screen: the continue element gets clicked automatically.
+jState.stage = "feedback";
+delete jState.question;
+await sleep(400);
+assert(feedbackClicks.length >= 1, "J: feedback continue clicked");
+
+// Typing question: submitted via the wrapper's sendAnswer stateNode.
+jState.stage = "question";
+jState.question = {
+  qType: "typing",
+  question: "Type it",
+  answers: ["hello"],
+  correctAnswers: ["hello"],
+};
+await sleep(400);
+assert(typingAnswers.includes("hello"), "J: typing answer sent via sendAnswer");
+aaHandle.stop();
+await sleep(200);
+const jClicksAfterStop = clickedContainers.length;
+await sleep(300);
+assert(
+  clickedContainers.length === jClicksAfterStop,
+  "J: auto-answer stopped after stop()",
+);
 
 console.log = origLog;
 if (failures) {

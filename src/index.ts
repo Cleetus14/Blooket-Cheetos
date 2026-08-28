@@ -3,24 +3,53 @@ import { createApi } from "./core/api";
 import { detectContext } from "./core/context";
 import { debugDump, stateDiagnostics } from "./core/state";
 import { mountPanel } from "./ui/gui";
+import { VERSION } from "./version";
 
 export function bootstrap(): void {
-  if ((window as any).__cheetosLoaded) {
+  const loaded = !!(window as any).__cheetosLoaded;
+  if (loaded && (window as any).__cheetosVersion === VERSION) {
+    // Same build already mounted on this page: just surface the panel.
     (window as any).__cheetosShow?.();
     return;
   }
+  if (loaded) {
+    // A different (older) build is mounted on this page. Tear it down so its
+    // stale panel, hotkey listeners, and running toggles can't fight the new
+    // build (this is what happens when an old bookmarklet is re-run after an
+    // update without refreshing the page).
+    try {
+      (window as any).__cheetosTeardown?.();
+    } catch {
+      /* ignore */
+    }
+    (window as any).__cheetosLoaded = false;
+  }
   (window as any).__cheetosLoaded = true;
+  (window as any).__cheetosVersion = VERSION;
 
   installAntiCheatPatch();
   const api = createApi();
   (window as any).cheetos = api;
   (window as any).__cheetosDebug = () => {
     const dump = debugDump();
-    console.log("%c[Cheetos debug]%c " + JSON.stringify(dump, null, 1), "color:#facc15", "color:inherit");
+    console.log(
+      "%c[Cheetos debug]%c " + JSON.stringify(dump, null, 1),
+      "color:#facc15",
+      "color:inherit",
+    );
     return dump;
   };
 
   const panel = mountPanel(api);
+  (window as any).__cheetosTeardown = () => {
+    try {
+      panel.teardown?.();
+    } catch {
+      /* ignore */
+    }
+    (window as any).__cheetosLoaded = false;
+  };
+
   let signature = "";
   let prevFound: boolean | null = null;
 

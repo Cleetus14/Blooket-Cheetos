@@ -69,7 +69,8 @@ export function gameDocument(): Document {
         /* ignore */
       }
     }
-    if (doc !== document) score += 10;
+    // Top page wins ties: the game is hosted in the top document on the
+    // current Blooket subdomains, and a markerless frame must not outrank it.
     if (score > bestScore) {
       bestScore = score;
       best = doc;
@@ -596,8 +597,10 @@ function buildNode(hunt: Hunt, fibers: AnyNode[]): AnyNode | null {
     question: hunt.question ?? null,
   };
 
+  // Reference order: the live game state's question wins, then the client
+  // object, then any bare question found in the object graph.
   const questionOf = (): AnyNode =>
-    hunt.client?.question ?? stateObj().question ?? hunt.question ?? null;
+    stateObj().question ?? hunt.client?.question ?? hunt.question ?? null;
 
   // React fiber internals that must never leak through the node proxy.
   const FIBER_RESERVED = new Set([
@@ -767,7 +770,7 @@ function referenceWalkInstance(doc: Document): AnyNode | null {
       if (gameShaped) return sn;
       if (!fallback) fallback = sn;
     }
-    const child = current.querySelector(":scope>div");
+    const child = current.querySelector?.(":scope>div");
     if (!child || child === current) break;
     current = child as HTMLElement;
     depth++;
@@ -776,6 +779,17 @@ function referenceWalkInstance(doc: Document): AnyNode | null {
 }
 
 function findReferenceInstance(): AnyNode | null {
+  // Reference-exact first: the first `_owner.stateNode` from the body>div
+  // walk, zero filtering — this is the grab every reference cheat uses, and
+  // it must stay unfiltered to land on the live game instance. The instance
+  // just needs to look like a component (state or props object) to be usable.
+  for (const doc of allDocuments()) {
+    const start = doc.querySelector("body>div") as HTMLElement | null;
+    if (!start) continue;
+    const raw = referenceWalk(start);
+    if (raw && (isObj(raw.state) || isObj(raw.props))) return raw;
+  }
+  // Fallback: prefer a game-shaped class instance deeper in the tree.
   for (const doc of allDocuments()) {
     const inst = referenceWalkInstance(doc);
     if (inst) return inst;

@@ -1,6 +1,6 @@
 import type { CheatDef } from "../types";
 import { randomDelay, shouldMiss, typeAnswerHuman } from "../core/human";
-import { isQuestionOnScreen, randomWrongIndex } from "../core/dom";
+import { clickAnswerContainerAt, clickFeedbackAdvance, randomWrongIndex } from "../core/dom";
 import { getSettings } from "../core/settings";
 
 const GAME_IDS = [
@@ -20,20 +20,31 @@ export const globalCheats: CheatDef[] = [
     label: "Auto Answer",
     group: "Global",
     kind: "toggle",
-    description: "Answers with human-like pacing and optional occasional misses.",
+    description: "Answers using the game's own live state (reference approach). Humanizer only adds optional pacing \u2014 it can't block the answer.",
     run(api) {
       let answeredSig = "";
-      let advancedSig = "";
+      const sigOf = (q: { question?: string; answers: string[] }) =>
+        String(q.question ?? "") + "|" + q.answers.join("~");
       return api.interval(() => {
-        const node = api.node();
-        const q = api.question();
-        if (!node || !q || !Array.isArray(q.answers) || !q.answers.length) return;
         const s = getSettings();
-        const stage = node.state?.stage;
-        const inFeedback = stage === "feedback" || !!node.state?.feedback;
-        const sig = String(q.question ?? "") + "|" + q.answers.join("~");
+        const node = api.node();
+        if (!node) return;
+        const st = node.state ?? {};
+
+        // Reference: on the feedback screen, click the continue element every
+        // tick (idempotent) so the next question loads automatically.
+        if (st.stage === "feedback" || st.feedback) {
+          if (clickFeedbackAdvance()) return;
+          api.advance(); // text-based fallback for renamed classes
+          return;
+        }
+
+        // Reference order: live state.question first, then props.client.question.
+        const q = st.question ?? node.props?.client?.question ?? null;
+        if (!q || !Array.isArray(q.answers) || !q.answers.length) return;
 
         if (q.qType === "typing") {
+          const sig = sigOf(q);
           if (answeredSig === sig) return;
           answeredSig = sig;
           if (s.typing) {
@@ -46,41 +57,38 @@ export const globalCheats: CheatDef[] = [
           return;
         }
 
-        if (inFeedback) {
-          if (advancedSig === sig) return;
-          advancedSig = sig;
-          const doAdvance = () => {
-            if (!api.advance()) advancedSig = ""; // retry next tick
-          };
-          if (s.delays) setTimeout(doAdvance, randomDelay(s.minDelay, s.maxDelay));
-          else doAdvance();
-          return;
+        // Reference: index of the first answer that appears in correctAnswers.
+        let ind = -1;
+        for (let i = 0; i < q.answers.length; i++) {
+          let found = false;
+          for (let j = 0; j < q.correctAnswers.length; j++) {
+            if (q.answers[i] == q.correctAnswers[j]) {
+              found = true;
+              break;
+            }
+          }
+          if (found) {
+            ind = i;
+            break;
+          }
+        }
+        if (ind < 0) return;
+
+        // Humanizer: occasionally click a wrong answer instead.
+        if (shouldMiss(s.accuracy)) {
+          const w = randomWrongIndex(q);
+          if (w >= 0) ind = w;
         }
 
-        // Only click while the question is actually rendered (not on the
-        // chest/lobby/result screens). The prompt text is the reliable marker
-        // on the hashed-class frontend.
+        const sig = sigOf(q) + "#" + ind;
         if (answeredSig === sig) return;
-        if (!isQuestionOnScreen(q)) return;
         answeredSig = sig;
-        const doAnswer = () => {
-          const q2 = api.question();
-          const n2 = api.node();
-          if (!q2 || !n2) return;
-          const st = n2.state?.stage;
-          if (st === "feedback" || n2.state?.feedback) return; // already moved on
-          let ok: boolean;
-          if (shouldMiss(s.accuracy)) {
-            const wrong = randomWrongIndex(q2);
-            ok = wrong >= 0 ? api.answerIndex(wrong) : api.answerCurrent();
-          } else {
-            ok = api.answerCurrent();
-          }
-          if (!ok) answeredSig = ""; // nothing clickable yet; allow retry
+        const doClick = () => {
+          if (!clickAnswerContainerAt(ind, q.answers[ind])) answeredSig = "";
         };
-        if (s.delays) setTimeout(doAnswer, randomDelay(s.minDelay, s.maxDelay));
-        else doAnswer();
-      }, 120);
+        if (s.delays) setTimeout(doClick, randomDelay(s.minDelay, s.maxDelay));
+        else doClick();
+      }, 50);
     },
   },
   {
@@ -111,31 +119,33 @@ export const globalCheats: CheatDef[] = [
     label: "Every Answer Correct",
     group: "Global",
     kind: "toggle",
-    description: "Keeps every answer in the set marked correct as questions load.",
+    description: "Marks every answer in the set correct as questions load (reference approach: live arrays patched in place + forceUpdate).",
     run(api) {
-      let warned = false;
       return api.interval(() => {
         const node = api.node();
-        if (!node) {
-          if (!warned) {
-            warned = true;
-            api.log("Waiting for the game to load before marking answers.");
-          }
-          return;
-        }
+        if (!node) return;
+        // Reference: patch the live question lists in place with the SAME
+        // answers array, then force a re-render so the game re-reads them.
         const lists = [node.freeQuestions, node.questions, node.props?.client?.questions];
         for (const list of lists) {
           if (!Array.isArray(list)) continue;
           for (const q of list) {
-            if (q && Array.isArray(q.answers)) q.correctAnswers = [...q.answers];
+            if (q && Array.isArray(q.answers) && q.correctAnswers !== q.answers) {
+              q.correctAnswers = q.answers;
+            }
           }
         }
-        // Current question may live in hook state or client props on the new
-        // frontend; patch it directly so Auto Answer always sees it correct.
-        const cur = node.state?.question ?? node.props?.client?.question ?? node.props?.question;
-        if (cur && Array.isArray(cur.answers)) cur.correctAnswers = [...cur.answers];
-        node.forceUpdate?.();
-      }, 250);
+        // Current question (reference order: state first).
+        const cur = node.state?.question ?? node.props?.client?.question;
+        if (cur && Array.isArray(cur.answers) && cur.correctAnswers !== cur.answers) {
+          cur.correctAnswers = cur.answers;
+        }
+        try {
+          node.forceUpdate?.();
+        } catch {
+          /* ignore */
+        }
+      }, 150);
     },
   },
   {

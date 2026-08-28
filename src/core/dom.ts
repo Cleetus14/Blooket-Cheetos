@@ -1,5 +1,5 @@
 import type { Question } from "../types";
-import { gameDocument } from "./state";
+import { allDocuments, gameDocument } from "./state";
 
 // The current Blooket frontend hashes/renames its CSS classes, so the old
 // `[class*='answerContainer']` selectors may match nothing. Every helper here
@@ -140,6 +140,51 @@ export function clickCorrect(question: Question): boolean {
   return false;
 }
 
+// Reference-exact answer click: `[class*='answerContainer']` at the same
+// index as the answer, tried on every same-origin document (top page first).
+// This is the exact selector the reference autoAnswer uses. Text-based
+// fallback covers builds where the class was renamed.
+export function clickAnswerContainerAt(index: number, fallbackText?: string): boolean {
+  for (const doc of allDocuments()) {
+    try {
+      const nodes = doc.querySelectorAll("[class*='answerContainer']");
+      const el = nodes[index] as HTMLElement | undefined;
+      if (el) {
+        el.click();
+        return true;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  if (fallbackText) {
+    const byText = findAnswerByText(fallbackText);
+    if (byText) {
+      byText.click();
+      return true;
+    }
+  }
+  return false;
+}
+
+// Reference-exact feedback advance: click the first child of the feedback
+// element (the continue button), tried on every same-origin document.
+export function clickFeedbackAdvance(): boolean {
+  for (const doc of allDocuments()) {
+    try {
+      const el = doc.querySelector("[class*='feedback'], [id*='feedback']") as HTMLElement | null;
+      const child = el?.firstChild as HTMLElement | null;
+      if (child && typeof (child as any).click === "function") {
+        (child as any).click();
+        return true;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  return false;
+}
+
 function typingInput(): HTMLInputElement | null {
   const wrapper: any = doc().querySelector("[class*='typingAnswerWrapper']");
   const input = wrapper?.querySelector("input, textarea");
@@ -153,9 +198,22 @@ function typingInput(): HTMLInputElement | null {
   return null;
 }
 
-function typingStateNode(wrapper: any): any {
-  // React 16/17 route via _owner, React 18 route via the fiber tree.
-  let node: any = (Object.values(wrapper) as any[])[1]?.children?._owner?.stateNode;
+export function typingStateNode(wrapper: any): any {
+  // React 16/17 route via _owner (reference approach), React 18 route via
+  // the fiber tree. children may be a single element or an array.
+  let node: any = null;
+  const values = Object.values(wrapper) as any[];
+  const kids = values[1]?.children;
+  if (Array.isArray(kids)) {
+    for (const k of kids) {
+      if (k?._owner?.stateNode) {
+        node = k._owner.stateNode;
+        break;
+      }
+    }
+  } else if (kids?._owner?.stateNode) {
+    node = kids._owner.stateNode;
+  }
   if (!node) {
     for (const key of Object.keys(wrapper)) {
       if (!key.startsWith("__reactFiber$") && !key.startsWith("__reactInternalInstance$")) continue;

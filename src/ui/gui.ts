@@ -433,6 +433,7 @@ export interface PanelHandle {
   root: HTMLElement;
   update(ctx: AppContext): void;
   reattach(): void;
+  teardown(): void;
 }
 
 export function mountPanel(api: CheatApi): PanelHandle {
@@ -669,7 +670,11 @@ export function mountPanel(api: CheatApi): PanelHandle {
     const key = (e.code || e.key || "").toLowerCase();
     const isMod = key === "shift" || key === "control" || key === "alt" || key === "meta";
     const isToggle = key === "keyx" || key === "x" || key === "keye" || key === "e";
-    if (!isToggle && !isMod) {
+    if (e.repeat) return;
+    // Always report the combo so a broken hotkey is diagnosable: if you see
+    // this line but no "panel shown/hidden", the toggle failed; if you see
+    // nothing at all, the keydown never reached the script.
+    if (!isMod) {
       console.log(
         "%c[Cheetos]%c hotkey: ctrl+shift+" + key,
         "color:#facc15",
@@ -677,7 +682,6 @@ export function mountPanel(api: CheatApi): PanelHandle {
       );
     }
     if (!isToggle) return;
-    if (e.repeat) return;
     e.preventDefault();
     e.stopPropagation();
     const now = Date.now();
@@ -690,6 +694,7 @@ export function mountPanel(api: CheatApi): PanelHandle {
       "color:inherit",
     );
   };
+  const boundTargets: EventTarget[] = [];
   const bindHotkeys = (): void => {
     let docs: Document[];
     try {
@@ -702,6 +707,7 @@ export function mountPanel(api: CheatApi): PanelHandle {
       for (const t of targets) {
         if (!t || hotkeyTargets.has(t)) continue;
         hotkeyTargets.add(t);
+        boundTargets.push(t as EventTarget);
         (t as EventTarget).addEventListener("keydown", onHotkey as EventListener, true);
         (t as EventTarget).addEventListener("keydown", onHotkey as EventListener, false);
       }
@@ -711,6 +717,20 @@ export function mountPanel(api: CheatApi): PanelHandle {
   // Blooket may create new same-origin iframes as you navigate modes; keep
   // re-binding so a freshly focused frame can't swallow the hotkey.
   setInterval(bindHotkeys, 2000);
+
+  const teardown = (): void => {
+    stopAllToggles();
+    for (const t of boundTargets) {
+      t.removeEventListener("keydown", onHotkey as EventListener, true);
+      t.removeEventListener("keydown", onHotkey as EventListener, false);
+    }
+    boundTargets.length = 0;
+    try {
+      root.remove();
+    } catch {
+      /* ignore */
+    }
+  };
 
   document.body.appendChild(root);
   makeDraggable(panel, head);
@@ -722,5 +742,6 @@ export function mountPanel(api: CheatApi): PanelHandle {
       if (!document.body.contains(root)) document.body.appendChild(root);
       bindHotkeys();
     },
+    teardown,
   };
 }
