@@ -31,7 +31,29 @@ export function clickCorrect(question: Question): boolean {
 export function submitTyping(answer: string): boolean {
   const wrapper: any = document.querySelector("[class*='typingAnswerWrapper']");
   if (!wrapper) return false;
-  const node: any = (Object.values(wrapper) as any[])[1]?.children?._owner?.stateNode;
+  // React 16/17 route via _owner, React 18 route via the fiber tree.
+  let node: any = (Object.values(wrapper) as any[])[1]?.children?._owner?.stateNode;
+  if (!node) {
+    for (const key of Object.keys(wrapper)) {
+      if (!key.startsWith("__reactFiber$") && !key.startsWith("__reactInternalInstance$")) continue;
+      const fiber = wrapper[key];
+      const seen = new Set<any>();
+      const stack: any[] = [fiber];
+      while (stack.length && !node) {
+        const f = stack.pop();
+        if (!f || seen.has(f)) continue;
+        seen.add(f);
+        const sn = f.stateNode;
+        if (sn && typeof sn.sendAnswer === "function") {
+          node = sn;
+          break;
+        }
+        if (f.child) stack.push(f.child);
+        if (f.sibling) stack.push(f.sibling);
+      }
+      if (node) break;
+    }
+  }
   if (typeof node?.sendAnswer === "function") {
     node.sendAnswer(answer);
     return true;

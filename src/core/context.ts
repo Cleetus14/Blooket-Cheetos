@@ -151,7 +151,14 @@ function modeFromState(): string | null {
   const s = node.state ?? {};
   const p = node.props ?? {};
   const raw =
-    s.gameMode ?? s.mode ?? p.gameMode ?? p.client?.gameMode ?? p.liveGameController?.mode ?? null;
+    p.client?.type ??
+    s.gameMode ??
+    s.mode ??
+    p.gameMode ??
+    p.client?.gameMode ??
+    p.liveGameController?.mode ??
+    p.liveGameController?._gameMode ??
+    null;
   if (typeof raw !== "string") return null;
   const m = raw.toLowerCase();
   if (m.includes("gold")) return "gold";
@@ -173,8 +180,10 @@ function isLiveGame(): boolean {
   const node = findStateNode();
   if (!node) return looksLive();
   const s = node.state ?? {};
+  const client = node.props?.client ?? {};
   if (node.props?.liveGameController) return true;
-  if (s.stage || s.phase || s.question) return true;
+  if (s.stage || s.phase || s.question || client.question) return true;
+  if (Array.isArray(s.choices) || Array.isArray(client.questions)) return true;
   if (s.gold !== undefined || s.crypto !== undefined || s.cash !== undefined) return true;
   return looksLive();
 }

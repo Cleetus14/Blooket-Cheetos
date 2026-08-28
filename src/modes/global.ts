@@ -102,19 +102,28 @@ export const globalCheats: CheatDef[] = [
     id: "global-every-correct",
     label: "Every Answer Correct",
     group: "Global",
-    kind: "action",
-    description: "Marks every answer in the current set as correct.",
+    kind: "toggle",
+    description: "Keeps every answer in the set marked correct as questions load.",
     run(api) {
-      const node = api.node();
-      if (!node) return;
-      const lists = [node.freeQuestions, node.questions, node.props?.client?.questions];
-      for (const list of lists) {
-        if (!Array.isArray(list)) continue;
-        for (const q of list) {
-          if (q && Array.isArray(q.answers)) q.correctAnswers = [...q.answers];
+      let warned = false;
+      return api.interval(() => {
+        const node = api.node();
+        if (!node) {
+          if (!warned) {
+            warned = true;
+            api.log("Waiting for the game to load before marking answers.");
+          }
+          return;
         }
-      }
-      node.forceUpdate?.();
+        const lists = [node.freeQuestions, node.questions, node.props?.client?.questions];
+        for (const list of lists) {
+          if (!Array.isArray(list)) continue;
+          for (const q of list) {
+            if (q && Array.isArray(q.answers)) q.correctAnswers = [...q.answers];
+          }
+        }
+        node.forceUpdate?.();
+      }, 250);
     },
   },
   {

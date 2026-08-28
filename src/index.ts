@@ -1,7 +1,7 @@
 import { installAntiCheatPatch } from "./core/antiCheat";
 import { createApi } from "./core/api";
 import { detectContext } from "./core/context";
-import { findStateNode } from "./core/state";
+import { findStateNode, stateDiagnostics } from "./core/state";
 import { mountPanel } from "./ui/gui";
 
 export function bootstrap(): void {
@@ -23,8 +23,7 @@ export function bootstrap(): void {
     if (ctx.signature !== signature) {
       signature = ctx.signature;
       panel.update(ctx);
-      const node = findStateNode();
-      const hasController = !!node?.props?.liveGameController;
+      const diag = stateDiagnostics();
       console.log(
         "%c[Cheetos]%c " +
           window.location.hostname +
@@ -34,7 +33,12 @@ export function bootstrap(): void {
           (ctx.modeId ? "/" + ctx.modeId : "") +
           (ctx.live ? " (live" : " (waiting") +
           ")" +
-          (ctx.kind === "game" && !hasController ? " [state node not ready]" : ""),
+          (diag.found ? "" : " [state node not found]"),
+        "color:#facc15",
+        "color:inherit",
+      );
+      console.log(
+        "%c[Cheetos state]%c " + JSON.stringify(diag),
         "color:#facc15",
         "color:inherit",
       );
