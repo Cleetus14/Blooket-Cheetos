@@ -778,21 +778,34 @@ function referenceWalkInstance(doc: Document): AnyNode | null {
   return fallback;
 }
 
-function findReferenceInstance(): AnyNode | null {
-  // Reference-exact first: the first `_owner.stateNode` from the body>div
-  // walk, zero filtering — this is the grab every reference cheat uses, and
-  // it must stay unfiltered to land on the live game instance. The instance
-  // just needs to look like a component (state or props object) to be usable.
-  for (const doc of allDocuments()) {
-    const start = doc.querySelector("body>div") as HTMLElement | null;
-    if (!start) continue;
-    const raw = referenceWalk(start);
-    if (raw && (isObj(raw.state) || isObj(raw.props))) return raw;
+// Exact port of the reference getStateNode walk. It descends body>div >
+// div > ... and returns the first `_owner.stateNode` reachable through
+// Object.values(div)[1].children[0]._owner — zero filtering, zero caching.
+// This is the single grab every reference cheat uses, so it must stay
+// faithful: the live game class instance sits at that exact spot.
+function referenceGetStateNode(doc: Document): AnyNode | null {
+  let current: HTMLElement | null = doc.querySelector("body>div") as HTMLElement | null;
+  let depth = 0;
+  while (current && depth < 800) {
+    try {
+      const values = Object.values(current) as AnyNode[];
+      const stateNode = values[1]?.children?.[0]?._owner?.stateNode;
+      if (stateNode) return stateNode;
+    } catch {
+      /* ignore */
+    }
+    const child = current.querySelector?.(":scope>div");
+    if (!child || child === current) break;
+    current = child as HTMLElement;
+    depth++;
   }
-  // Fallback: prefer a game-shaped class instance deeper in the tree.
+  return null;
+}
+
+function findReferenceInstance(): AnyNode | null {
   for (const doc of allDocuments()) {
-    const inst = referenceWalkInstance(doc);
-    if (inst) return inst;
+    const inst = referenceGetStateNode(doc);
+    if (inst && (isObj(inst.state) || isObj(inst.props))) return inst;
   }
   return null;
 }
@@ -896,15 +909,11 @@ function computeStateNode(): AnyNode | null {
 }
 
 export function findStateNode(): AnyNode | null {
-  const now = Date.now();
-  if (nodeCache && now - nodeCache.at < 300) return nodeCache.node;
-  // Reference-first: the game is a class component, so the classic walk gets
-  // the real live instance. The object-graph hunt is only a fallback for
-  // builds that stopped mounting the game as a class component.
-  const ref = findReferenceInstance();
-  const node = ref ? wrapLiveNode(ref) : computeStateNode();
-  nodeCache = { node, at: now };
-  return node;
+  // Reference-exact, no proxy, no cache: every cheat re-reads the live class
+  // instance the same way the reference does. The instance is the game
+  // component itself, so `state`, `props`, `freeQuestions`, `questions`,
+  // `choosePrize`, etc. are all direct members.
+  return findReferenceInstance();
 }
 
 export function stateDiagnostics(): Record<string, any> {

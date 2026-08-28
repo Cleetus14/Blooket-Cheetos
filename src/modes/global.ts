@@ -1,7 +1,6 @@
 import type { CheatDef } from "../types";
-import { randomDelay, shouldMiss, typeAnswerHuman } from "../core/human";
-import { clickAnswerContainerAt, clickFeedbackAdvance, randomWrongIndex } from "../core/dom";
-import { getSettings } from "../core/settings";
+import { typeAnswerHuman } from "../core/human";
+import { clickAnswerContainerAt, clickFeedbackAdvance } from "../core/dom";
 
 const GAME_IDS = [
   "60101da869e8c70013913b59", "625db660c6842334835cb4c6", "60268f8861bd520016eae038",
@@ -22,72 +21,41 @@ export const globalCheats: CheatDef[] = [
     kind: "toggle",
     description: "Answers using the game's own live state (reference approach). Humanizer only adds optional pacing \u2014 it can't block the answer.",
     run(api) {
-      let answeredSig = "";
-      const sigOf = (q: { question?: string; answers: string[] }) =>
-        String(q.question ?? "") + "|" + q.answers.join("~");
       return api.interval(() => {
-        const s = getSettings();
         const node = api.node();
         if (!node) return;
-        const st = node.state ?? {};
-
-        // Reference: on the feedback screen, click the continue element every
-        // tick (idempotent) so the next question loads automatically.
-        if (st.stage === "feedback" || st.feedback) {
-          if (clickFeedbackAdvance()) return;
-          api.advance(); // text-based fallback for renamed classes
-          return;
-        }
+        const state = node.state ?? {};
 
         // Reference order: live state.question first, then props.client.question.
-        const q = st.question ?? node.props?.client?.question ?? null;
+        const q = state.question ?? node.props?.client?.question ?? null;
         if (!q || !Array.isArray(q.answers) || !q.answers.length) return;
 
-        if (q.qType === "typing") {
-          const sig = sigOf(q);
-          if (answeredSig === sig) return;
-          answeredSig = sig;
-          if (s.typing) {
-            void typeAnswerHuman(q.answers[0]).then((ok) => {
-              if (!ok) answeredSig = "";
-            });
+        if (q.qType !== "typing") {
+          if (state.stage === "feedback" || state.feedback) {
+            // Reference: click the continue element every tick.
+            clickFeedbackAdvance();
           } else {
-            api.answerTyping();
-          }
-          return;
-        }
-
-        // Reference: index of the first answer that appears in correctAnswers.
-        let ind = -1;
-        for (let i = 0; i < q.answers.length; i++) {
-          let found = false;
-          for (let j = 0; j < q.correctAnswers.length; j++) {
-            if (q.answers[i] == q.correctAnswers[j]) {
-              found = true;
-              break;
+            // Reference: index of the first answer present in correctAnswers.
+            let ind = -1;
+            for (let i = 0; i < q.answers.length; i++) {
+              let found = false;
+              for (let j = 0; j < q.correctAnswers.length; j++) {
+                if (q.answers[i] == q.correctAnswers[j]) {
+                  found = true;
+                  break;
+                }
+              }
+              if (found) {
+                ind = i;
+                break;
+              }
             }
+            if (ind >= 0) clickAnswerContainerAt(ind, q.answers[ind]);
           }
-          if (found) {
-            ind = i;
-            break;
-          }
+        } else {
+          // Reference: submit through the wrapper's own sendAnswer.
+          void typeAnswerHuman(q.answers[0]);
         }
-        if (ind < 0) return;
-
-        // Humanizer: occasionally click a wrong answer instead.
-        if (shouldMiss(s.accuracy)) {
-          const w = randomWrongIndex(q);
-          if (w >= 0) ind = w;
-        }
-
-        const sig = sigOf(q) + "#" + ind;
-        if (answeredSig === sig) return;
-        answeredSig = sig;
-        const doClick = () => {
-          if (!clickAnswerContainerAt(ind, q.answers[ind])) answeredSig = "";
-        };
-        if (s.delays) setTimeout(doClick, randomDelay(s.minDelay, s.maxDelay));
-        else doClick();
       }, 50);
     },
   },
@@ -124,22 +92,19 @@ export const globalCheats: CheatDef[] = [
       return api.interval(() => {
         const node = api.node();
         if (!node) return;
-        // Reference: patch the live question lists in place with the SAME
-        // answers array, then force a re-render so the game re-reads them.
+        // Reference: patch the live lists in place with the same answers array
+        // (unconditional, exactly like the reference), then forceUpdate.
         const lists = [node.freeQuestions, node.questions, node.props?.client?.questions];
         for (const list of lists) {
           if (!Array.isArray(list)) continue;
-          for (const q of list) {
-            if (q && Array.isArray(q.answers) && q.correctAnswers !== q.answers) {
-              q.correctAnswers = q.answers;
-            }
+          for (let i = 0; i < list.length; i++) {
+            const q = list[i];
+            if (q && Array.isArray(q.answers)) q.correctAnswers = q.answers;
           }
         }
         // Current question (reference order: state first).
         const cur = node.state?.question ?? node.props?.client?.question;
-        if (cur && Array.isArray(cur.answers) && cur.correctAnswers !== cur.answers) {
-          cur.correctAnswers = cur.answers;
-        }
+        if (cur && Array.isArray(cur.answers)) cur.correctAnswers = cur.answers;
         try {
           node.forceUpdate?.();
         } catch {
@@ -271,8 +236,8 @@ export const globalCheats: CheatDef[] = [
       if (tokens > 500 || xp > 300) {
         api.log("Heads up: the server caps rewards at 500 tokens / 300 XP per run \u2014 larger values get clamped or rejected.");
       }
-      if (!window.location.hostname.toLowerCase().includes("play.blooket.com")) {
-        api.log("Add Tokens works on play.blooket.com (host or join any game page).");
+      if (!window.location.hostname.toLowerCase().includes("blooket.com")) {
+        api.log("Add Tokens works on any blooket.com page (dashboard, lobby, or a live game).");
         return;
       }
       void (async () => {

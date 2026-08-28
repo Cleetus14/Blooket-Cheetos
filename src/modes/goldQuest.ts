@@ -279,30 +279,25 @@ export const goldQuestCheats: CheatDef[] = [
           });
           if (bestIdx < 0) return;
           pickedSig = sig;
-          const pick = () => {
-            const n3 = api.node();
-            if (!n3 || n3.state?.stage !== "prize") return;
-            // Preferred: the game's own pick handler (same call the chest
-            // onClick makes), so hashed CSS classes can't break it.
-            if (typeof n3.choosePrize === "function") {
-              n3.choosePrize(bestIdx);
-              return;
-            }
-            const el = document.querySelector(
-              `div[class*='choice${bestIdx + 1}']`,
-            ) as HTMLElement | null;
-            if (el) {
-              el.click();
-              return;
-            }
-            const text = choices[bestIdx]?.text;
-            if (!text || !clickChoiceByText(text)) pickedSig = ""; // allow retry
-          };
-          // Instant pick through the game's own handler; the humanizer only
-          // applies to answering, not chest picking, so this never feels slow.
-          pick();
+          // Reference-exact: click the chest's DOM element by its 1-based class.
+          const el = document.querySelector(
+            `div[class*='choice${bestIdx + 1}']`,
+          ) as HTMLElement | null;
+          if (el) {
+            el.click();
+            return;
+          }
+          // Fallback: the game's own pick handler (0-based), same call the
+          // chest onClick makes.
+          const n3 = api.node();
+          if (typeof n3?.choosePrize === "function") {
+            n3.choosePrize(bestIdx);
+            return;
+          }
+          const text = choices[bestIdx]?.text;
+          if (!text || !clickChoiceByText(text)) pickedSig = ""; // allow retry
         });
-      }, 150);
+      }, 50);
     },
   },
   {

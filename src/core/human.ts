@@ -22,31 +22,39 @@ export function shouldMiss(accuracy: number): boolean {
   return Math.random() * 100 > acc;
 }
 
-// Humanized typing answer: fills the input visually when one exists, then
-// ALWAYS submits through the game's own sendAnswer stateNode (the reference
-// approach), so the answer lands even if the visual typing is imperfect.
-// Falls back to the plain typing submitter when no wrapper/stateNode exists.
+let lastVisualSig = "";
+
+// Humanized typing answer: the real submission is ALWAYS the game's own
+// sendAnswer (reference-exact, instant), so the answer lands every time. The
+// character-by-character input fill is purely cosmetic and never gates or
+// delays the submission.
 export async function typeAnswerHuman(answer: string): Promise<boolean> {
+  const s = getSettings();
   const wrapper: any = document.querySelector("[class*='typingAnswerWrapper']");
-  if (wrapper) {
-    const node = typingStateNode(wrapper);
-    const input = wrapper.querySelector("input, textarea") as HTMLInputElement | null;
-    if (input) {
-      const proto =
-        input.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-      const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
-      let value = "";
-      for (const ch of answer) {
-        value += ch;
-        setter?.call(input, value);
-        input.dispatchEvent(new Event("input", { bubbles: true }));
-        await sleep(randomDelay(45, 130));
+  const node = wrapper ? typingStateNode(wrapper) : null;
+  if (typeof node?.sendAnswer === "function") {
+    node.sendAnswer(answer);
+    if (s.typing && wrapper && lastVisualSig !== answer) {
+      lastVisualSig = answer;
+      const input = wrapper.querySelector("input, textarea") as HTMLInputElement | null;
+      if (input) {
+        void (async () => {
+          const proto =
+            input.tagName === "TEXTAREA"
+              ? HTMLTextAreaElement.prototype
+              : HTMLInputElement.prototype;
+          const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+          let value = "";
+          for (const ch of answer) {
+            value += ch;
+            setter?.call(input, value);
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+            await sleep(randomDelay(25, 60));
+          }
+        })();
       }
     }
-    if (typeof node?.sendAnswer === "function") {
-      node.sendAnswer(answer);
-      return true;
-    }
+    return true;
   }
   return submitTyping(answer);
 }

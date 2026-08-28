@@ -6,24 +6,45 @@ import { MODES, globalCheats } from "../modes";
 
 export function createApi(): CheatApi {
   const node = () => findStateNode();
+  // The reference never wraps the game node; it reads/writes straight through
+  // `stateNode.props.liveGameController`. Keep a tiny helper for that.
+  const controller = () => node()?.props?.liveGameController ?? null;
 
   const api: CheatApi = {
     node,
     state: () => node()?.state ?? {},
     client: () => node()?.props?.client ?? {},
     setState: (patch) => node()?.setState?.(patch),
-    setVal: (path, val) => node()?.setVal?.(path, val),
-    getVal: (path, cb) => node()?.getVal?.(path, cb),
+    // Reference-exact write: liveGameController.setVal({ path, val }).
+    setVal: (path, val) => {
+      const c = controller();
+      if (!c || typeof c.setVal !== "function") return;
+      try {
+        c.setVal({ path, val });
+      } catch {
+        try {
+          c.setVal(path, val);
+        } catch {
+          /* ignore */
+        }
+      }
+    },
+    // Reference-exact read: liveGameController.getDatabaseVal(path, cb).
+    getVal: (path, cb) => {
+      const c = controller();
+      const fn = c?.getDatabaseVal ?? c?.getVal;
+      if (typeof fn !== "function") return;
+      try {
+        const r = fn.call(c, path, cb);
+        if (r && typeof r.then === "function") r.then(cb).catch(() => {});
+      } catch {
+        /* ignore */
+      }
+    },
+    // Reference order: state.question first, then props.client.question.
     question: (): Question | null => {
       const n = node();
-      const fromNode = n?.question?.();
-      return (
-        fromNode ??
-        n?.props?.client?.question ??
-        n?.state?.question ??
-        n?.props?.question ??
-        null
-      );
+      return n?.state?.question ?? n?.props?.client?.question ?? null;
     },
     answerCurrent: () => {
       const q = api.question();
@@ -44,30 +65,30 @@ export function createApi(): CheatApi {
     kickPlayer: (name: string) => {
       const n = node();
       if (!n) return [];
-      const controller: any = n.props?.liveGameController ?? null;
+      const c = controller();
       const attempts: string[] = [];
       const call = (fn: any, label: string) => {
         if (typeof fn !== "function") return;
         try {
-          fn.call(controller ?? n, name);
+          fn.call(c ?? n, name);
           attempts.push(label);
         } catch {
           /* ignore */
         }
       };
-      call(controller?.removePlayer, "removePlayer");
-      call(controller?.kickPlayer, "kickPlayer");
-      call(controller?.disconnectPlayer, "disconnectPlayer");
+      call(c?.removePlayer, "removePlayer");
+      call(c?.kickPlayer, "kickPlayer");
+      call(c?.disconnectPlayer, "disconnectPlayer");
       call(n.kickPlayer, "game.kickPlayer");
       call(n.removePlayer, "game.removePlayer");
       try {
-        n.setVal(`c/${name}`, null);
+        api.setVal(`c/${name}`, null);
         attempts.push("nodeDelete");
       } catch {
         /* ignore */
       }
       try {
-        n.setVal(`c/${name}/kicked`, true);
+        api.setVal(`c/${name}/kicked`, true);
         attempts.push("kickedFlag");
       } catch {
         /* ignore */

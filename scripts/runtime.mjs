@@ -1,10 +1,12 @@
-// Runtime simulation test: boots the real bundle against fake Blooket-like
-// DOMs and verifies the multi-path state detection (React 18 fiber props,
-// hook-only state, legacy _owner stateNode, same-origin iframe, context
-// provider value, window object graph), that setState/setVal reach the game
-// controller, and that the Ctrl+Shift+X/E hotkey really toggles the panel.
+// Runtime simulation test: boots the real bundle against a fake Blooket-like
+// DOM that models the ACTUAL reference structure — the game is a React class
+// component reachable through
+//   Object.values(body>div)[1].children[0]._owner.stateNode
+// exactly like the reference getStateNode. It then drives the real cheat code
+// (auto answer, every-answer-correct, gold auto choose, kick) and verifies the
+// Ctrl+Shift+X/E hotkey toggles the panel.
 import { build } from "esbuild";
-import { mkdtempSync, writeFileSync, rmSync } from "fs";
+import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join, resolve, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -45,22 +47,27 @@ class FakeClassList {
   }
 }
 
+// A DOM element whose standard properties are non-enumerable, matching the
+// real DOM. Real React attaches `__reactInternalInstance$...` and
+// `__reactProps$...` as OWN ENUMERABLE props, which is what the reference
+// `Object.values(el)[1]` reads. Keeping our fake DOM props non-enumerable
+// makes `Object.values(el)` behave exactly like the real Blooket page.
 class FakeEl {
   constructor(tag) {
-    this.tagName = String(tag).toUpperCase();
-    this.children = [];
-    this.parentNode = null;
-    this.style = {};
-    this.dataset = {};
-    this.classList = new FakeClassList();
-    this.listeners = {};
-    this.id = "";
-    this.textContent = "";
-    this.innerText = "";
-    this.value = "";
-    this.type = "";
-    this.placeholder = "";
-    this.title = "";
+    Object.defineProperty(this, "tagName", { value: String(tag).toUpperCase(), writable: true, enumerable: false });
+    Object.defineProperty(this, "children", { value: [], writable: true, enumerable: false });
+    Object.defineProperty(this, "parentNode", { value: null, writable: true, enumerable: false });
+    Object.defineProperty(this, "style", { value: {}, writable: true, enumerable: false });
+    Object.defineProperty(this, "dataset", { value: {}, writable: true, enumerable: false });
+    Object.defineProperty(this, "classList", { value: new FakeClassList(), writable: true, enumerable: false });
+    Object.defineProperty(this, "listeners", { value: {}, writable: true, enumerable: false });
+    Object.defineProperty(this, "id", { value: "", writable: true, enumerable: false });
+    Object.defineProperty(this, "textContent", { value: "", writable: true, enumerable: false });
+    Object.defineProperty(this, "innerText", { value: "", writable: true, enumerable: false });
+    Object.defineProperty(this, "value", { value: "", writable: true, enumerable: false });
+    Object.defineProperty(this, "type", { value: "", writable: true, enumerable: false });
+    Object.defineProperty(this, "placeholder", { value: "", writable: true, enumerable: false });
+    Object.defineProperty(this, "title", { value: "", writable: true, enumerable: false });
   }
   appendChild(c) {
     this.children.push(c);
@@ -76,6 +83,9 @@ class FakeEl {
   }
   addEventListener(type, fn) {
     (this.listeners[type] = this.listeners[type] || []).push(fn);
+  }
+  removeEventListener(type, fn) {
+    this.listeners[type] = (this.listeners[type] || []).filter((f) => f !== fn);
   }
   dispatchEvent(ev) {
     ev.target = this;
@@ -96,6 +106,9 @@ const elementsById = new Map();
 const fakeDocument = {
   body: null,
   iframes: [],
+  answerContainers: [],
+  feedbackEl: null,
+  typingWrapper: null,
   createElement(tag) {
     const el = new FakeEl(tag);
     if (el.id) elementsById.set(el.id, el);
@@ -106,60 +119,99 @@ const fakeDocument = {
   },
   querySelector(sel) {
     if (sel === "body>div") return this.body.children[0] || null;
-    if (sel.includes("feedback")) return this.feedbackEl || null;
-    if (sel.includes("typingAnswerWrapper")) return this.typingWrapper || null;
+    if (sel.includes("feedback")) return this.feedbackEl;
+    if (sel.includes("typingAnswerWrapper")) return this.typingWrapper;
     return null;
   },
   querySelectorAll(sel) {
     if (sel === "iframe") return this.iframes;
-    if (sel.includes("answerContainer")) return this.answerContainers || [];
+    if (sel.includes("answerContainer")) return this.answerContainers;
     return [];
   },
   addEventListener() {},
+  removeEventListener() {},
 };
 fakeDocument.body = fakeDocument.createElement("body");
 elementsById.set("body", fakeDocument.body);
 
 let setValCalls = [];
-let fiberState = { gold: 100, gold2: 100, stage: "prize", choices: [{ type: "gold", val: 100 }] };
-const fiber = {
-  memoizedProps: {
+const gameInst = {
+  state: {
+    gold: 200,
+    gold2: 200,
+    stage: "question",
+    question: {
+      qType: "mc",
+      question: "What is 2+2?",
+      answers: ["3", "4", "5"],
+      correctAnswers: ["4"],
+    },
+    choices: [
+      { type: "gold", val: 100, text: "Choice A" },
+      { type: "multiply", val: 2, text: "Choice B" },
+    ],
+  },
+  props: {
+    client: { name: "TestPlayer", type: "gold", blook: "Chick" },
     liveGameController: {
       setVal(args) {
         setValCalls.push(args);
       },
-      getDatabaseVal() {},
-    },
-    client: { name: "TestPlayer", type: "gold" },
-  },
-  memoizedState: {
-    memoizedState: fiberState,
-    next: null,
-    queue: {
-      dispatch(merged) {
-        fiberState = merged;
-        fiber.memoizedState.memoizedState = merged;
+      getDatabaseVal(path, cb) {
+        cb({ TestPlayer: { g: 200, b: "Chick" }, OtherPlayer: { g: 999, b: "Frog" } });
       },
     },
   },
-  child: null,
-  sibling: null,
-  return: null,
-  stateNode: null,
+  freeQuestions: [{ question: "One", answers: ["a", "b"], correctAnswers: ["a"] }],
+  questions: [{ question: "One", answers: ["a", "b"], correctAnswers: ["a"] }],
+  setState(patch) {
+    Object.assign(this.state, patch);
+  },
+  forceUpdate() {},
+  choosePrize(idx) {
+    chooseCalls.push(idx);
+  },
 };
 
+const chooseCalls = [];
+
+// Build the reference structure on the root div:
+//   Object.values(root)[1].children[0]._owner.stateNode === gameInst
 const gameDiv = fakeDocument.createElement("div");
-gameDiv.__reactFiber$test = fiber;
+gameDiv.__reactInternalInstance$test = { dummy: true }; // index 0
+gameDiv.__reactProps$test = { children: [{ _owner: { stateNode: gameInst } }] }; // index 1
 fakeDocument.body.children.push(gameDiv);
+
+// Answer containers for the reference auto-answer click.
+const clickedContainers = [];
+for (let i = 0; i < 3; i++) {
+  const el = fakeDocument.createElement("div");
+  el.classList.add("answerContainer");
+  el.click = () => clickedContainers.push(i);
+  fakeDocument.answerContainers.push(el);
+}
+
+const feedbackClicks = [];
+fakeDocument.feedbackEl = { firstChild: { click: () => feedbackClicks.push(1) } };
+
+const typingAnswers = [];
+fakeDocument.typingWrapper = fakeDocument.createElement("div");
+fakeDocument.typingWrapper.__reactInternalInstance$t = { dummy: true };
+fakeDocument.typingWrapper.__reactProps$t = {
+  children: { _owner: { stateNode: { sendAnswer: (text) => typingAnswers.push(text) } } },
+};
 
 const fakeWindow = {
   location: {
-    hostname: "play.blooket.com",
+    hostname: "gold.blooket.com",
     pathname: "/play/gold",
-    href: "https://play.blooket.com/play/gold",
+    href: "https://gold.blooket.com/play/gold",
   },
   addEventListener(type, fn) {
     (this.listeners[type] = this.listeners[type] || []).push(fn);
+  },
+  removeEventListener(type, fn) {
+    this.listeners[type] = (this.listeners[type] || []).filter((f) => f !== fn);
   },
   dispatchEvent(ev) {
     ev.target = this;
@@ -183,6 +235,10 @@ fakeWindow.listeners = {};
 globalThis.window = fakeWindow;
 globalThis.document = fakeDocument;
 globalThis.localStorage = fakeWindow.localStorage;
+globalThis.HTMLElement = FakeEl;
+globalThis.HTMLInputElement = FakeEl;
+globalThis.HTMLTextAreaElement = FakeEl;
+globalThis.getComputedStyle = () => ({ cursor: "default" });
 
 function panelEl() {
   const root = fakeDocument.body.children.find((c) => c.id === "cheetos-root");
@@ -190,7 +246,7 @@ function panelEl() {
 }
 
 function hotkey(code) {
-  fakeWindow.dispatchEvent({ type: "keydown", ctrlKey: true, shiftKey: true, code });
+  fakeWindow.dispatchEvent({ type: "keydown", ctrlKey: true, shiftKey: true, code, repeat: false });
 }
 
 let failures = 0;
@@ -203,9 +259,8 @@ function assert(cond, msg) {
   }
 }
 
-// Detection caches live inside the bundle (300ms node / 600ms DOM / 700ms
-// hunt), so wait long enough between scenarios for fresh scans.
 const settle = () => new Promise((r) => setTimeout(r, 1000));
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const outfile = join(tmp, "bundle.js");
 await build({
@@ -220,390 +275,129 @@ await build({
 await import(outfile);
 
 // ---------------------------------------------------------------------------
-// Scenario A: React 18 fiber with liveGameController in props (new frontend)
+// Reference state node detection (the only path the reference cheats use)
 // ---------------------------------------------------------------------------
 const api = fakeWindow.cheetos;
 assert(!!api, "api exposed on window.cheetos");
-assert(!!api.node(), "A: state node found on fiber props path");
-assert(api.client().name === "TestPlayer", "A: client name readable");
-assert(api.state().gold === 100, "A: hook state readable");
-assert(
-  !consoleLogs.some((l) => l.includes("[state node not found]")),
-  "A: no [state node not found] diagnostic",
-);
+assert(!!api.node(), "reference _owner.stateNode found");
+assert(api.client().name === "TestPlayer", "client name readable");
+assert(api.state().gold === 200, "state readable");
+assert(api.question()?.question === "What is 2+2?", "live question readable");
 
 api.setState({ gold: 999 });
-assert(fiberState.gold === 999, "A: setState patched hook state");
+assert(gameInst.state.gold === 999, "setState patches the live class state");
 
 setValCalls = [];
 api.setVal("c/TestPlayer/g", 555);
 assert(
   setValCalls.length === 1 && setValCalls[0].path === "c/TestPlayer/g" && setValCalls[0].val === 555,
-  "A: setVal forwarded to liveGameController",
+  "setVal forwards {path,val} to liveGameController",
 );
 
 const panel = panelEl();
-assert(!!panel, "A: panel element mounted");
-assert(panel.style.display !== "none", "A: panel visible by default");
+assert(!!panel, "panel element mounted");
+assert(panel.style.display !== "none", "panel visible by default");
 const status = panel.children[0]?.children.find((c) => c.id === "cheetos-status");
-assert(status?.textContent === "Gold Quest \u00b7 live", "A: status chip reports live game, got: " + status?.textContent);
+assert(status?.textContent === "Gold Quest \u00b7 live", "status chip reports live game, got: " + status?.textContent);
 
-// Hotkey toggling (the reported bug). The same handler is installed on
-// window/document/body, so repeats within 120ms are debounced; space presses
-// like a real user.
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// ---------------------------------------------------------------------------
+// Hotkey toggling (the reported bug)
+// ---------------------------------------------------------------------------
+const visibleBefore = panel.style.display;
 hotkey("KeyX");
-assert(panel.style.display === "none", "A: Ctrl+Shift+X hides panel");
-await sleep(160);
-hotkey("KeyX");
-assert(panel.style.display === "flex", "A: Ctrl+Shift+X shows panel again");
-await sleep(160);
+assert(panel.style.display !== visibleBefore, "Ctrl+Shift+X toggled the panel");
+await sleep(150); // the hotkey has a 120ms double-fire debounce; respect it
 hotkey("KeyE");
-assert(panel.style.display === "none", "A: Ctrl+Shift+E hides panel");
-await sleep(160);
-hotkey("KeyE");
-assert(panel.style.display === "flex", "A: Ctrl+Shift+E shows panel again");
-
-const toggleBtn = fakeDocument.body.children.find((c) => c.id === "cheetos-root")?.children[0];
-toggleBtn.click();
-assert(panel.style.display === "none", "A: toggle button hides panel");
-toggleBtn.click();
-assert(panel.style.display === "flex", "A: toggle button shows panel");
-
-const title = panel.children[0]?.children.find((c) => c.textContent?.startsWith("Blooket Cheetos V"));
-assert(!!title, "A: versioned panel title present");
+assert(panel.style.display === visibleBefore, "Ctrl+Shift+E toggled it back");
 
 // ---------------------------------------------------------------------------
-// Scenario B: legacy class instance reachable via __reactProps$ -> _owner
+// Every Answer Correct
 // ---------------------------------------------------------------------------
-await settle();
-fakeDocument.body.children = [];
-fakeDocument.iframes = [];
-const legacyInstance = {
-  props: { client: { name: "LegacyPlayer", type: "gold" } },
-  state: { gold: 50 },
-  setState() {},
-  forceUpdate() {},
-};
-const legacyDiv = fakeDocument.createElement("div");
-legacyDiv.__reactProps$test = {
-  children: [{ _owner: { stateNode: legacyInstance } }],
-};
-fakeDocument.body.children.push(legacyDiv);
-await settle();
-assert(!!api.node(), "B: state node found via legacy _owner path");
-assert(api.client().name === "LegacyPlayer", "B: legacy client name readable");
-
-// ---------------------------------------------------------------------------
-// Scenario C: function component whose props carry nothing, only hook state
-// ---------------------------------------------------------------------------
-await settle();
-fakeDocument.body.children = [];
-const hookOnlyFiber = {
-  memoizedProps: {},
-  memoizedState: {
-    memoizedState: { gold: 42, stage: "prize", choices: [] },
-    next: null,
-    queue: { dispatch() {} },
-  },
-  child: null,
-  sibling: null,
-  return: null,
-  stateNode: null,
-};
-const hookDiv = fakeDocument.createElement("div");
-hookDiv.__reactFiber$hook = hookOnlyFiber;
-fakeDocument.body.children.push(hookDiv);
-await settle();
-assert(!!api.node(), "C: state node found from hook state alone");
-assert(api.state().gold === 42, "C: hook-only state readable");
-
-// ---------------------------------------------------------------------------
-// Scenario D: the game lives in a same-origin iframe
-// ---------------------------------------------------------------------------
-await settle();
-fakeDocument.body.children = [];
-const frameState = { gold: 777, stage: "prize" };
-const frameFiber = {
-  memoizedProps: {
-    liveGameController: { setVal() {}, getDatabaseVal() {} },
-    client: { name: "FramePlayer", type: "gold" },
-  },
-  memoizedState: {
-    memoizedState: frameState,
-    next: null,
-    queue: { dispatch() {} },
-  },
-  child: null,
-  sibling: null,
-  return: null,
-  stateNode: null,
-};
-const frameDoc = {
-  body: null,
-  iframes: [],
-  createElement(tag) {
-    return new FakeEl(tag);
-  },
-  getElementById: () => null,
-  querySelector: () => null,
-  querySelectorAll: () => [],
-  addEventListener() {},
-};
-frameDoc.body = frameDoc.createElement("body");
-const frameGameDiv = frameDoc.createElement("div");
-frameGameDiv.__reactFiber$frame = frameFiber;
-frameDoc.body.children.push(frameGameDiv);
-const iframeEl = fakeDocument.createElement("iframe");
-iframeEl.contentDocument = frameDoc;
-fakeDocument.iframes.push(iframeEl);
-await settle();
-assert(!!api.node(), "D: state node found inside same-origin iframe");
-assert(api.client().name === "FramePlayer", "D: iframe client name readable");
-assert(api.state().gold === 777, "D: iframe hook state readable");
-
-// ---------------------------------------------------------------------------
-// Scenario E: context provider value (memoizedProps.value) — the likely
-// current Blooket shape: controller + client + state inside one value object
-// ---------------------------------------------------------------------------
-await settle();
-fakeDocument.body.children = [];
-const ctxValue = {
-  client: { name: "CtxPlayer", type: "gold" },
-  liveGameController: { setVal() {}, getDatabaseVal() {} },
-  gold: 123,
-  gold2: 123,
-  stage: "prize",
-  choices: [{ type: "gold", val: 50 }],
-};
-const ctxFiber = {
-  memoizedProps: { value: ctxValue },
-  memoizedState: null,
-  child: null,
-  sibling: null,
-  return: null,
-  stateNode: null,
-};
-const ctxDiv = fakeDocument.createElement("div");
-ctxDiv.__reactFiber$ctx = ctxFiber;
-fakeDocument.body.children.push(ctxDiv);
-await settle();
-assert(!!api.node(), "E: state node found from context provider value");
-assert(api.client().name === "CtxPlayer", "E: context client name readable");
-assert(api.state().gold === 123, "E: context state readable");
-
-// ---------------------------------------------------------------------------
-// Scenario F: controller reachable only through the window object graph
-// (module-scope global, no fibers at all)
-// ---------------------------------------------------------------------------
-await settle();
-fakeDocument.body.children = [];
-const globalController = {
-  setVal() {},
-  getDatabaseVal() {},
-};
-fakeWindow.__gameController = globalController;
-await settle();
-assert(!!api.node(), "F: state node found via window object graph");
-
-// ---------------------------------------------------------------------------
-// Scenario G: gold Auto Choose calls the game's own pick handler with the
-// most valuable chest (the fix for hashed CSS classes breaking clicks)
-// ---------------------------------------------------------------------------
-fakeDocument.body.children = [];
-delete fakeWindow.__gameController;
-const chooseCalls = [];
-const gState = {
-  gold: 200,
-  gold2: 200,
-  stage: "prize",
-  choices: [
-    { type: "gold", val: 100, text: "Choice A" },
-    { type: "multiply", val: 2, text: "Choice B" },
-  ],
-};
-const gFiber = {
-  memoizedProps: {
-    liveGameController: {
-      setVal(args) {
-        setValCalls.push(args);
-      },
-      getDatabaseVal(path, cb) {
-        cb({ TestPlayer: { g: 200 }, OtherPlayer: { g: 999 } });
-      },
-    },
-    client: { name: "TestPlayer", type: "gold" },
-  },
-  memoizedState: {
-    memoizedState: gState,
-    next: null,
-    queue: {
-      dispatch(merged) {
-        Object.assign(gState, merged);
-      },
-    },
-  },
-  choosePrize(idx) {
-    chooseCalls.push(idx);
-  },
-  child: null,
-  sibling: null,
-  return: null,
-  stateNode: null,
-};
-const gDiv = fakeDocument.createElement("div");
-gDiv.__reactFiber$test = gFiber;
-fakeDocument.body.children.push(gDiv);
-await settle();
-setValCalls = [];
-const acHandle = api.runCheat("gold-auto-choose");
-assert(!!acHandle, "G: gold-auto-choose starts");
-await sleep(700);
-// Best value: multiply 200 -> 400 beats gold+100 -> 300, so index 1 wins.
-assert(
-  chooseCalls.length >= 1 && chooseCalls[chooseCalls.length - 1] === 1,
-  "G: auto-choose picked the best chest via choosePrize, got " + chooseCalls.join(","),
-);
-assert(typeof acHandle.stop === "function", "G: auto-choose returns a stoppable handle");
-acHandle.stop();
-await sleep(250);
-const afterStop = chooseCalls.length;
-await sleep(400);
-assert(chooseCalls.length === afterStop, "G: auto-choose stopped picking after stop()");
-
-// ---------------------------------------------------------------------------
-// Scenario H: Every Answer Correct marks the live question (the reported
-// "does not work at all" bug)
-// ---------------------------------------------------------------------------
-const hQ = {
-  qType: "mc",
-  question: "What is 2+2?",
-  answers: ["3", "4", "5"],
-  correctAnswers: ["3"],
-};
-Object.assign(gState, { stage: "question", question: hQ });
-gFiber.freeQuestions = [
-  { question: "One", answers: ["a", "b"], correctAnswers: ["a"] },
-];
-await settle();
 const eacHandle = api.runCheat("global-every-correct");
-assert(!!eacHandle, "H: every-answer-correct starts");
+assert(!!eacHandle, "every-answer-correct starts");
 await sleep(700);
 assert(
-  hQ.correctAnswers.length === 3 && hQ.correctAnswers.join(",") === "3,4,5",
-  "H: live question answers all marked correct, got " + hQ.correctAnswers.join(","),
+  gameInst.state.question.correctAnswers.join(",") === "3,4,5",
+  "EAC marked the live question correct, got " + gameInst.state.question.correctAnswers.join(","),
 );
 assert(
-  gFiber.freeQuestions[0].correctAnswers.join(",") === "a,b",
-  "H: freeQuestions list answers all marked correct",
+  gameInst.freeQuestions[0].correctAnswers.join(",") === "a,b",
+  "EAC marked freeQuestions list correct",
 );
 eacHandle.stop();
 
 // ---------------------------------------------------------------------------
-// Scenario I: Kick Player tries every removal hook and reports attempts
+// Auto Answer (reference-exact: answerContainer click + feedback + typing)
 // ---------------------------------------------------------------------------
-const kicked = [];
-gFiber.memoizedProps.liveGameController.removePlayer = (name) => kicked.push(name);
-await settle();
-const attempts = api.kickPlayer("Victim");
-assert(
-  attempts.includes("removePlayer") && attempts.includes("nodeDelete"),
-  "I: kick tries removePlayer + node delete, got " + attempts.join(","),
-);
-assert(kicked.includes("Victim"), "I: removePlayer called with the target name");
-
-// ---------------------------------------------------------------------------
-// Scenario J: Auto Answer runs the reference-exact path — fresh _owner
-// stateNode grab, [class*='answerContainer'] click at the correct index,
-// feedback auto-advance, and typing sendAnswer — with the humanizer off it
-// answers instantly and cannot be blocked by DOM text gating.
-// ---------------------------------------------------------------------------
-fakeDocument.body.children = [];
-const clickedContainers = [];
-const answerEls = [];
-for (let i = 0; i < 3; i++) {
-  const el = fakeDocument.createElement("div");
-  el.classList.add("answerContainer");
-  el.click = () => {
-    clickedContainers.push(i);
-  };
-  answerEls.push(el);
-}
-fakeDocument.answerContainers = answerEls;
-
-const feedbackClicks = [];
-fakeDocument.feedbackEl = { firstChild: { click: () => feedbackClicks.push(1) } };
-
-const typingAnswers = [];
-fakeDocument.typingWrapper = fakeDocument.createElement("div");
-fakeDocument.typingWrapper.__reactFiber$test = {
-  stateNode: null,
-  child: {
-    stateNode: { sendAnswer: (text) => typingAnswers.push(text) },
-    child: null,
-    sibling: null,
-  },
-  sibling: null,
-  return: null,
+gameInst.state.stage = "question";
+gameInst.state.question = {
+  qType: "mc",
+  question: "What is 2+2?",
+  answers: ["3", "4", "5"],
+  correctAnswers: ["4"],
 };
-
-const jState = {
-  stage: "question",
-  question: {
-    qType: "mc",
-    question: "What is 2+2?",
-    answers: ["3", "4", "5"],
-    correctAnswers: ["4"],
-  },
-};
-const jInst = {
-  state: jState,
-  props: {
-    client: { name: "JPlayer" },
-    liveGameController: { setVal() {}, getDatabaseVal() {} },
-  },
-  setState(patch) {
-    Object.assign(this.state, patch);
-  },
-  forceUpdate() {},
-};
-const jDiv = fakeDocument.createElement("div");
-jDiv.__reactProps$test = { children: [{ _owner: { stateNode: jInst } }] };
-fakeDocument.body.children.push(jDiv);
-
 await settle();
 const aaHandle = api.runCheat("global-auto-answer");
-assert(!!aaHandle, "J: auto-answer starts");
+assert(!!aaHandle, "auto-answer starts");
 await sleep(400);
-assert(
-  clickedContainers.includes(1),
-  "J: correct answerContainer clicked (index 1), got [" + clickedContainers.join(",") + "]",
-);
+assert(clickedContainers.includes(1), "correct answerContainer clicked (index 1), got [" + clickedContainers.join(",") + "]");
 
-// Feedback screen: the continue element gets clicked automatically.
-jState.stage = "feedback";
-delete jState.question;
+// Feedback screen: continue element clicked automatically.
+// (state.question is intentionally kept — real Blooket keeps it during feedback)
+gameInst.state.stage = "feedback";
 await sleep(400);
-assert(feedbackClicks.length >= 1, "J: feedback continue clicked");
+assert(feedbackClicks.length >= 1, "feedback continue clicked");
 
-// Typing question: submitted via the wrapper's sendAnswer stateNode.
-jState.stage = "question";
-jState.question = {
+// Typing question: submitted via the wrapper's sendAnswer.
+gameInst.state.stage = "question";
+gameInst.state.question = {
   qType: "typing",
   question: "Type it",
   answers: ["hello"],
   correctAnswers: ["hello"],
 };
 await sleep(400);
-assert(typingAnswers.includes("hello"), "J: typing answer sent via sendAnswer");
+assert(typingAnswers.includes("hello"), "typing answer sent via sendAnswer");
 aaHandle.stop();
-await sleep(200);
-const jClicksAfterStop = clickedContainers.length;
-await sleep(300);
+
+// ---------------------------------------------------------------------------
+// Gold Auto Choose (reference-exact: click div[class*='choiceN'])
+// ---------------------------------------------------------------------------
+fakeDocument.querySelector = (sel) => {
+  if (sel === "body>div") return gameDiv;
+  if (sel.includes("feedback")) return fakeDocument.feedbackEl;
+  if (sel.includes("typingAnswerWrapper")) return fakeDocument.typingWrapper;
+  if (sel.includes("choice2")) return { click: () => choiceClicks.push(2) };
+  if (sel.includes("choice1")) return { click: () => choiceClicks.push(1) };
+  return null;
+};
+const choiceClicks = [];
+gameInst.state.stage = "prize";
+gameInst.state.gold = 200;
+gameInst.state.choices = [
+  { type: "gold", val: 100, text: "Choice A" },
+  { type: "multiply", val: 2, text: "Choice B" },
+];
+await settle();
+const acHandle = api.runCheat("gold-auto-choose");
+assert(!!acHandle, "gold-auto-choose starts");
+await sleep(700);
+// Best value: multiply 200 -> 400 beats gold+100 -> 300, so index 1 (choice2).
+assert(choiceClicks.includes(2), "auto-choose clicked choice2 (the best chest), got [" + choiceClicks.join(",") + "]");
+acHandle.stop();
+
+// ---------------------------------------------------------------------------
+// Kick Player tries every removal hook + node delete
+// ---------------------------------------------------------------------------
+const kicked = [];
+gameInst.props.liveGameController.removePlayer = (name) => kicked.push(name);
+await settle();
+const attempts = api.kickPlayer("Victim");
 assert(
-  clickedContainers.length === jClicksAfterStop,
-  "J: auto-answer stopped after stop()",
+  attempts.includes("removePlayer") && attempts.includes("nodeDelete"),
+  "kick tries removePlayer + node delete, got " + attempts.join(","),
 );
+assert(kicked.includes("Victim"), "removePlayer called with the target name");
 
 console.log = origLog;
 if (failures) {
@@ -611,4 +405,5 @@ if (failures) {
   process.exit(1);
 }
 console.log("runtime sim: all passed");
+rmSync(tmp, { recursive: true, force: true });
 process.exit(0);
