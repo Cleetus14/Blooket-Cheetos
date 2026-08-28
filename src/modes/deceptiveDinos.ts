@@ -105,30 +105,35 @@ export const deceptiveDinosCheats: CheatDef[] = [
     id: "dinos-rock-esp",
     label: "Rock ESP",
     group: "Deceptive Dinos",
-    kind: "action",
+    kind: "toggle",
     description: "Shows the value of each rock.",
     run(api) {
-      const node = api.node();
-      if (!node) return;
-      const s = node.state;
-      const rocksEl = document.querySelector("[class*='rockButton']")
-        ?.parentElement as HTMLElement | null;
-      if (!rocksEl) return;
-      if (!s.choices?.length) s.choices = sampleChoices(3);
-      const mult = s.fossilMult ?? 1;
-      Array.from(rocksEl.children).forEach((rock: any, i: number) => {
-        const c = s.choices[i];
-        if (!c) return;
-        rock.querySelector?.("div")?.remove?.();
-        const el = document.createElement("div");
-        el.style.cssText =
-          "color:#fff;font-family:Macondo,sans-serif;font-size:1em;display:flex;justify-content:center;transform:translateY(25px);";
-        el.innerText =
-          c.type === "fossil"
-            ? `+${Math.round(c.val * mult)} Fossils`
-            : `x${c.val} Fossils Per Excavation`;
-        rock.append(el);
-      });
+      return api.interval(() => {
+        const node = api.node();
+        if (!node) return;
+        const s = node.state;
+        const rocksEl = document.querySelector("[class*='rockButton']")
+          ?.parentElement as HTMLElement | null;
+        if (!rocksEl) return;
+        if (!s.choices?.length) s.choices = sampleChoices(3);
+        const mult = s.fossilMult ?? 1;
+        Array.from(rocksEl.children).forEach((rock: any, i: number) => {
+          const c = s.choices[i];
+          if (!c) return;
+          let el = rock.querySelector(".cheetos-rock-esp") as HTMLElement | null;
+          if (!el) {
+            el = document.createElement("div");
+            el.className = "cheetos-rock-esp";
+            el.style.cssText =
+              "color:#fff;font-family:Macondo,sans-serif;font-size:1em;display:flex;justify-content:center;transform:translateY(25px);";
+            rock.append(el);
+          }
+          el.innerText =
+            c.type === "fossil"
+              ? `+${Math.round(c.val * mult)} Fossils`
+              : `x${c.val} Fossils Per Excavation`;
+        });
+      }, 300);
     },
   },
 ];

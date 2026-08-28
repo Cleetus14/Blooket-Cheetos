@@ -29,49 +29,62 @@ export const monsterBrawlCheats: CheatDef[] = [
     id: "brawl-instant-kill",
     label: "Instant Kill",
     group: "Monster Brawl",
-    kind: "action",
+    kind: "toggle",
     description: "Sets every enemy to one hit point.",
     run(api) {
-      const node = api.node();
-      const world = node?.game?.current?.config?.sceneConfig?.physics?.world;
-      if (!world) return;
-      const colliders = (world.colliders?._active ?? []).filter((x: any) =>
-        x.callbackContext?.toString?.()?.includes?.("dmgCd"),
-      );
-      for (const collider of colliders) {
-        const enemies = collider.object2;
-        if (!enemies) continue;
-        const proto = enemies.classType?.prototype;
-        if (proto && !proto.__cheetosPatched) {
-          const start = proto.start;
-          proto.start = function (this: any, ...a: any[]) {
-            start.apply(this, a);
-            this.hp = 1;
-          };
-          proto.__cheetosPatched = true;
+      let patchedProto: any = null;
+      let originalStart: any = null;
+      const handle = api.interval(() => {
+        const node = api.node();
+        const world = node?.game?.current?.config?.sceneConfig?.physics?.world;
+        if (!world) return;
+        const colliders = (world.colliders?._active ?? []).filter((x: any) =>
+          x.callbackContext?.toString?.()?.includes?.("dmgCd"),
+        );
+        for (const collider of colliders) {
+          const enemies = collider.object2;
+          if (!enemies) continue;
+          const proto = enemies.classType?.prototype;
+          if (proto && !patchedProto) {
+            originalStart = proto.start;
+            patchedProto = proto;
+            proto.start = function (this: any, ...a: any[]) {
+              originalStart.apply(this, a);
+              this.hp = 1;
+            };
+          }
+          enemies.children?.entries?.forEach?.((e: any) => {
+            e.hp = 1;
+          });
         }
-        enemies.children?.entries?.forEach?.((e: any) => {
-          e.hp = 1;
-        });
-      }
+      }, 300);
+      return {
+        running: () => handle.running(),
+        stop() {
+          handle.stop();
+          if (patchedProto && originalStart) patchedProto.start = originalStart;
+        },
+      };
     },
   },
   {
     id: "brawl-invincibility",
     label: "Invincibility",
     group: "Monster Brawl",
-    kind: "action",
+    kind: "toggle",
     description: "Disables damage from enemy colliders.",
     run(api) {
-      const node = api.node();
-      const world = node?.game?.current?.config?.sceneConfig?.physics?.world;
-      if (!world) return;
-      const colliders = (world.colliders?._active ?? []).filter(
-        (x: any) =>
-          x.callbackContext?.toString?.()?.includes?.("invulnerableTime") ||
-          x.callbackContext?.toString?.()?.includes?.("dmgCd"),
-      );
-      for (const collider of colliders) collider.collideCallback = () => {};
+      return api.interval(() => {
+        const node = api.node();
+        const world = node?.game?.current?.config?.sceneConfig?.physics?.world;
+        if (!world) return;
+        const colliders = (world.colliders?._active ?? []).filter(
+          (x: any) =>
+            x.callbackContext?.toString?.()?.includes?.("invulnerableTime") ||
+            x.callbackContext?.toString?.()?.includes?.("dmgCd"),
+        );
+        for (const collider of colliders) collider.collideCallback = () => {};
+      }, 300);
     },
   },
 ];

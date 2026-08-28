@@ -51,8 +51,9 @@ Chromebooks work exactly the same way — Chrome on ChromeOS accepts bookmarks j
 | Mode | Cheats |
 |---|---|
 | Global (any quiz mode) | Auto Answer, Highlight Answers, Every Answer Correct |
-| Gold Quest | Set Gold, Chest ESP, Always Triple, Auto Choose, Swap Gold |
-| Crypto Hack | Set Crypto, Auto Guess, Password ESP, Choice ESP |
+| Rewards | Add Tokens (+XP) |
+| Gold Quest | Set Gold, Set Player Gold, Reset Player Gold, Reset All Gold, Silent Steal Gold, Silent Reset Gold, Ruin Chests, Chest ESP, Always Triple, Auto Choose, Swap Gold |
+| Cyber Hack | Set Crypto, Auto Guess, Password ESP, Choice ESP |
 | Café | Set Cash, Stock Food, Max Items |
 | Factory | Set Cash, Max Blooks, Free Upgrades |
 | Tower of Doom | Max Stats, Set Coins, Max Health |

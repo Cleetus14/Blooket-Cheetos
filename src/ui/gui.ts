@@ -3,6 +3,7 @@ import type { AppContext } from "../core/context";
 import { MODES, type ModeDef } from "../modes";
 import { globalCheats } from "../modes/global";
 import { getSettings, updateSettings } from "../core/settings";
+import { VERSION } from "../version";
 
 const ACTIVE: Record<string, ToggleHandle> = {};
 
@@ -347,27 +348,84 @@ function makeDraggable(panel: HTMLElement, handle: HTMLElement): void {
   let dragging = false;
   let offX = 0;
   let offY = 0;
+  let pointerId: number | null = null;
 
-  handle.addEventListener("mousedown", (e) => {
+  handle.style.touchAction = "none";
+
+  const start = (x: number, y: number, id: number) => {
     dragging = true;
+    pointerId = id;
     const rect = panel.getBoundingClientRect();
-    offX = e.clientX - rect.left;
-    offY = e.clientY - rect.top;
+    offX = x - rect.left;
+    offY = y - rect.top;
     handle.style.cursor = "grabbing";
-    e.preventDefault();
-  });
+  };
 
-  window.addEventListener("mousemove", (e) => {
+  const move = (x: number, y: number) => {
     if (!dragging) return;
     panel.style.right = "auto";
-    panel.style.left = e.clientX - offX + "px";
-    panel.style.top = e.clientY - offY + "px";
-  });
+    panel.style.left = x - offX + "px";
+    panel.style.top = y - offY + "px";
+  };
 
-  window.addEventListener("mouseup", () => {
+  const end = () => {
     dragging = false;
+    pointerId = null;
     handle.style.cursor = "grab";
+  };
+
+  const ignoreDrag = (target: EventTarget | null) =>
+    target instanceof Element && !!target.closest("button");
+
+  if (window.PointerEvent) {
+    handle.addEventListener("pointerdown", (e) => {
+      if (ignoreDrag(e.target)) return;
+      start(e.clientX, e.clientY, e.pointerId);
+      handle.setPointerCapture?.(e.pointerId);
+      e.preventDefault();
+    });
+    handle.addEventListener("pointermove", (e) => {
+      if (e.pointerId !== pointerId) return;
+      move(e.clientX, e.clientY);
+    });
+    handle.addEventListener("pointerup", (e) => {
+      if (e.pointerId !== pointerId) return;
+      end();
+    });
+    handle.addEventListener("pointercancel", (e) => {
+      if (e.pointerId !== pointerId) return;
+      end();
+    });
+    return;
+  }
+
+  handle.addEventListener("mousedown", (e) => {
+    if (ignoreDrag(e.target)) return;
+    start(e.clientX, e.clientY, 0);
+    e.preventDefault();
   });
+  window.addEventListener("mousemove", (e) => {
+    move(e.clientX, e.clientY);
+  });
+  window.addEventListener("mouseup", () => end());
+  handle.addEventListener(
+    "touchstart",
+    (e) => {
+      if (ignoreDrag(e.target)) return;
+      const t = e.touches[0];
+      if (t) start(t.clientX, t.clientY, 1);
+    },
+    { passive: true },
+  );
+  handle.addEventListener(
+    "touchmove",
+    (e) => {
+      const t = e.touches[0];
+      if (t) move(t.clientX, t.clientY);
+    },
+    { passive: true },
+  );
+  handle.addEventListener("touchend", () => end());
 }
 
 export interface PanelHandle {
@@ -437,7 +495,7 @@ export function mountPanel(api: CheatApi): PanelHandle {
     color: C.gold,
     marginRight: "auto",
   });
-  title.textContent = "Blooket Cheetos";
+  title.textContent = "Blooket Cheetos V" + VERSION;
 
   const status = sty(document.createElement("span"), {
     fontSize: "10px",

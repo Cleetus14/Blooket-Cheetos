@@ -20,32 +20,79 @@ export interface ModeDef {
   cheats: CheatDef[];
 }
 
+const any = (...prefixes: string[]) => (p: string) => prefixes.some((x) => p.startsWith(x));
+
 export const MODES: ModeDef[] = [
-  { id: "gold", label: "Gold Quest", match: (p) => p.includes("/gold"), cheats: goldQuestCheats },
-  { id: "crypto", label: "Crypto Hack", match: (p) => p.includes("/hack"), cheats: cryptoHackCheats },
+  {
+    id: "gold",
+    label: "Gold Quest",
+    match: any("/play/gold", "/gold/play/landing"),
+    cheats: goldQuestCheats,
+  },
+  {
+    id: "crypto",
+    label: "Cyber Hack",
+    match: any("/play/hack", "/hack/play/landing"),
+    cheats: cryptoHackCheats,
+  },
   {
     id: "fishing",
     label: "Fishing Frenzy",
-    match: (p) => p.includes("/fishing") || p.includes("/fish/play"),
+    match: any("/play/fishing", "/fish/play/landing"),
     cheats: fishingFrenzyCheats,
   },
   {
     id: "defense",
     label: "Tower Defense",
-    match: (p) => p.includes("/defense") && !p.includes("/defense2"),
+    match: (p) => p.startsWith("/defense") && !p.startsWith("/defense2"),
     cheats: towerDefenseCheats,
   },
-  { id: "brawl", label: "Monster Brawl", match: (p) => p.includes("/brawl"), cheats: monsterBrawlCheats },
-  { id: "dino", label: "Deceptive Dinos", match: (p) => p.includes("/dino"), cheats: deceptiveDinosCheats },
-  { id: "cafe", label: "Café", match: (p) => p.includes("/cafe"), cheats: cafeCheats },
-  { id: "factory", label: "Factory", match: (p) => p.includes("/factory"), cheats: factoryCheats },
-  { id: "rush", label: "Blook Rush", match: (p) => p.includes("/rush"), cheats: blookRushCheats },
-  { id: "tower", label: "Tower of Doom", match: (p) => p.includes("/tower"), cheats: towerOfDoomCheats },
-  { id: "kingdom", label: "Crazy Kingdom", match: (p) => p.includes("/kingdom"), cheats: crazyKingdomCheats },
+  {
+    id: "brawl",
+    label: "Monster Brawl",
+    match: any("/play/brawl", "/brawl/play/landing"),
+    cheats: monsterBrawlCheats,
+  },
+  {
+    id: "dino",
+    label: "Deceptive Dinos",
+    match: any("/play/dino", "/dino/play/landing"),
+    cheats: deceptiveDinosCheats,
+  },
+  {
+    id: "cafe",
+    label: "Café",
+    match: (p) => p.startsWith("/cafe"),
+    cheats: cafeCheats,
+  },
+  {
+    id: "factory",
+    label: "Factory",
+    match: any("/play/factory", "/factory/play/landing"),
+    cheats: factoryCheats,
+  },
+  {
+    id: "rush",
+    label: "Blook Rush",
+    match: any("/play/rush", "/rush/play/landing"),
+    cheats: blookRushCheats,
+  },
+  {
+    id: "tower",
+    label: "Tower of Doom",
+    match: (p) => p.startsWith("/tower"),
+    cheats: towerOfDoomCheats,
+  },
+  {
+    id: "kingdom",
+    label: "Crazy Kingdom",
+    match: (p) => p.startsWith("/kingdom"),
+    cheats: crazyKingdomCheats,
+  },
   {
     id: "workshop",
     label: "Santa's Workshop",
-    match: (p) => p.includes("/toy"),
+    match: any("/play/toy", "/toy/play/landing"),
     cheats: santaWorkshopCheats,
   },
 ];
