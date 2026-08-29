@@ -389,6 +389,155 @@ assert(
 );
 assert(kicked.includes("Victim"), "removePlayer called with the target name");
 
+// ---- hooks-based tree (modern Blooket shape: no class instances) ----
+gameFiber.stateNode = null;
+const hooksState = {
+  gold: 200,
+  gold2: 200,
+  stage: "question",
+  question: { qType: "mc", question: "What is 2+2?", answers: ["3", "4", "5"], correctAnswers: ["4"] },
+  choices: [
+    { type: "gold", val: 100, text: "Choice A" },
+    { type: "multiply", val: 2, text: "Choice B" },
+  ],
+};
+const hooksSetValCalls = [];
+const hooksCtrl = {
+  setVal(args) {
+    hooksSetValCalls.push(args);
+  },
+  getDatabaseVal(path, cb) {
+    cb({ HooksPlayer: { g: 200, b: "Chick" } });
+  },
+};
+const hooksClient = { name: "HooksPlayer", type: "gold", blook: "Chick" };
+const hooksKicked = [];
+const hooksMethods = {
+  removePlayer: (name) => hooksKicked.push(name),
+  sendAnswer: (text) => typingAnswers.push(text),
+};
+const hState = {
+  memoizedState: hooksState,
+  queue: {
+    dispatch: (updater) => {
+      hState.memoizedState = typeof updater === "function" ? updater(hState.memoizedState) : updater;
+    },
+  },
+  next: null,
+};
+const hCtrl = { memoizedState: { current: hooksCtrl }, queue: null, next: null };
+const hClient = { memoizedState: { current: hooksClient }, queue: null, next: null };
+const hMethods = { memoizedState: { current: hooksMethods }, queue: null, next: null };
+const hList = {
+  memoizedState: [{ question: "One", answers: ["a", "b"], correctAnswers: ["a"] }],
+  queue: null,
+  next: null,
+};
+hState.next = hCtrl;
+hCtrl.next = hClient;
+hClient.next = hMethods;
+hMethods.next = hList;
+appFiber.type = () => {};
+appFiber.memoizedState = hState;
+appFiber.memoizedProps = { type: "checkbox", name: "high-contrast-toggle", onChange: () => {} };
+await sleep(700);
+
+assert(!!api.node(), "hooks tree: game state found via hook chain");
+assert(api.client().name === "HooksPlayer", "hooks tree: client readable from ref hook");
+assert(
+  api.client().name !== "high-contrast-toggle",
+  "hooks tree: HTML input props not mistaken for client, got " + api.client().name,
+);
+assert(api.state().gold === 200, "hooks tree: state readable from useState hook");
+assert(api.question()?.question === "What is 2+2?", "hooks tree: live question readable");
+api.setState({ gold: 777 });
+assert(hooksState.gold === 777, "hooks tree: setState mutated the hook state object");
+assert(hState.memoizedState.gold === 777, "hooks tree: dispatch re-rendered the hook state");
+assert(api.state().gold === 777, "hooks tree: node.state tracks the new hook object");
+hooksSetValCalls.length = 0;
+api.setVal("c/HooksPlayer/g", 555);
+assert(
+  hooksSetValCalls.length === 1 &&
+    hooksSetValCalls[0].path === "c/HooksPlayer/g" &&
+    hooksSetValCalls[0].val === 555,
+  "hooks tree: setVal forwards to ref-held controller",
+);
+
+const hooksEac = api.runCheat("global-every-correct");
+assert(!!hooksEac, "hooks tree: every-answer-correct starts");
+await sleep(700);
+assert(
+  hooksState.question.correctAnswers.join(",") === "3,4,5",
+  "hooks tree: EAC marked the live hook question, got " + hooksState.question.correctAnswers.join(","),
+);
+assert(
+  hList.memoizedState[0].correctAnswers.join(",") === "a,b",
+  "hooks tree: EAC marked the hook question list",
+);
+hooksEac.stop();
+
+hooksState.stage = "question";
+hooksState.question = {
+  qType: "mc",
+  question: "What is 2+2?",
+  answers: ["3", "4", "5"],
+  correctAnswers: ["4"],
+};
+await settle();
+const hooksAa = api.runCheat("global-auto-answer");
+assert(!!hooksAa, "hooks tree: auto-answer starts");
+await sleep(400);
+assert(
+  clickedContainers.includes(1),
+  "hooks tree: correct answerContainer clicked (index 1), got [" + clickedContainers.join(",") + "]",
+);
+hooksAa.stop();
+
+const hooksKick = api.kickPlayer("HooksVictim");
+assert(
+  hooksKicked.includes("HooksVictim"),
+  "hooks tree: removePlayer from ref methods called with the target name",
+);
+assert(
+  hooksKick.includes("game.removePlayer") || hooksKick.includes("removePlayer"),
+  "hooks tree: kick reports the ref removal hook, got " + hooksKick.join(","),
+);
+
+// ---- hooks tree with useReducer-shaped state ([state, dispatch]) ----
+const redState = {
+  gold: 200,
+  gold2: 200,
+  stage: "question",
+  question: { qType: "mc", question: "What is 2+2?", answers: ["3", "4", "5"], correctAnswers: ["4"] },
+  choices: [
+    { type: "gold", val: 100, text: "Choice A" },
+    { type: "multiply", val: 2, text: "Choice B" },
+  ],
+};
+let redCurrent = redState;
+const redHook = {
+  memoizedState: [
+    redState,
+    (updater) => {
+      redCurrent = typeof updater === "function" ? updater(redCurrent) : updater;
+    },
+  ],
+  queue: {
+    dispatch: (updater) => {
+      redCurrent = typeof updater === "function" ? updater(redCurrent) : updater;
+      redHook.memoizedState[0] = redCurrent;
+    },
+  },
+  next: hCtrl,
+};
+appFiber.memoizedState = redHook;
+await sleep(700);
+assert(!!api.node(), "reducer hook: state found from [state, dispatch] array");
+assert(api.state().gold === 200, "reducer hook: state readable from array hook");
+api.setState({ gold: 888 });
+assert(redCurrent.gold === 888, "reducer hook: setState dispatch applied");
+assert(api.client().name === "HooksPlayer", "reducer hook: ref chain still readable");
+
 delete container.__reactContainer$prod;
 container.aa = {};
 container.bb = { children: [{ _owner: { stateNode: gameInst } }] };

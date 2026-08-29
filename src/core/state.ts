@@ -1,5 +1,24 @@
 type AnyNode = any;
 
+const FIBER_PREFIXES = ["__reactFiber$", "__reactInternalInstance$", "__reactContainer$"];
+
+const METHOD_NAMES = [
+  "sendAnswer",
+  "choosePrize",
+  "kickPlayer",
+  "removePlayer",
+  "disconnectPlayer",
+  "sellBlook",
+  "answerNext",
+  "answerQuestion",
+  "submitAnswer",
+  "checkAnswer",
+];
+
+const METHOD_ALIASES: Record<string, string[]> = {
+  kickPlayer: ["kickPlayer", "removePlayer", "disconnectPlayer"],
+};
+
 function isCheetosEl(el: HTMLElement | null): boolean {
   return (
     !!el &&
@@ -55,8 +74,6 @@ export function gameDocument(): Document {
   docCache = { doc: best, at: now };
   return best;
 }
-
-const FIBER_PREFIXES = ["__reactFiber$", "__reactInternalInstance$", "__reactContainer$"];
 
 function reactKeyedValues(el: HTMLElement, prefixes: string[]): AnyNode[] {
   const out: AnyNode[] = [];
@@ -121,6 +138,16 @@ function collectFibers(): AnyNode[] {
   return fibers;
 }
 
+function firstChildDiv(el: AnyNode): AnyNode | null {
+  try {
+    const hit = el.querySelector?.(":scope>div");
+    if (hit) return hit;
+  } catch {
+    /* older engines */
+  }
+  return el.firstElementChild ?? null;
+}
+
 function isClassInstance(o: AnyNode): boolean {
   return (
     !!o &&
@@ -129,6 +156,39 @@ function isClassInstance(o: AnyNode): boolean {
     typeof o.state === "object" &&
     o.state !== null
   );
+}
+
+function instanceHasGameSignals(sn: AnyNode): boolean {
+  if (!sn || typeof sn !== "object") return false;
+  if (isClassInstance(sn)) return true;
+  const props = sn.props ?? {};
+  if (props.client || props.liveGameController) return true;
+  return Object.keys(sn.state ?? {}).length > 0;
+}
+
+function referenceInstance(doc: Document): AnyNode | null {
+  let current: AnyNode = doc.querySelector("body>div");
+  let depth = 0;
+  while (current && depth < 2000) {
+    try {
+      for (const v of Object.values(current) as AnyNode[]) {
+        if (!v || typeof v !== "object" || v.children == null) continue;
+        const kids = Array.isArray(v.children) ? v.children : [v.children];
+        for (const k of kids) {
+          if (!k || typeof k !== "object") continue;
+          const sn = k._owner?.stateNode;
+          if (instanceHasGameSignals(sn)) return sn;
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+    const child = firstChildDiv(current);
+    if (!child || child === current) return null;
+    current = child;
+    depth++;
+  }
+  return null;
 }
 
 function scoreInstance(inst: AnyNode): number {
@@ -158,7 +218,7 @@ function scoreInstance(inst: AnyNode): number {
   return score;
 }
 
-function findGameInstance(): AnyNode | null {
+function bestClassInstance(): AnyNode | null {
   let best: AnyNode | null = null;
   let bestScore = 0;
   for (const f of collectFibers()) {
@@ -173,59 +233,298 @@ function findGameInstance(): AnyNode | null {
   return best;
 }
 
-export function findInstanceWithMethod(method: string): AnyNode | null {
-  for (const f of collectFibers()) {
-    const sn = f.stateNode;
-    if (sn && typeof sn[method] === "function") return sn;
-  }
-  return null;
+function stateScore(v: AnyNode): number {
+  if (!v || typeof v !== "object") return 0;
+  if (typeof v.setVal === "function" || typeof v.getDatabaseVal === "function") return 0;
+  if (v.child || v.sibling || v.return || v.$$typeof || v.memoizedState) return 0;
+  let s = 0;
+  if (v.question && typeof v.question === "object") s += 4;
+  if (typeof v.stage === "string" || typeof v.phase === "string") s += 3;
+  if (Array.isArray(v.choices)) s += 2;
+  if (Array.isArray(v.answers) && Array.isArray(v.correctAnswers)) s += 2;
+  if (typeof v.gold === "number") s += 2;
+  if (typeof v.gold2 === "number") s += 2;
+  if (typeof v.crypto === "number") s += 2;
+  if (typeof v.cash === "number") s += 2;
+  if (typeof v.doubloons === "number") s += 2;
+  if (typeof v.tokens === "number") s += 1;
+  if (v.blookData && typeof v.blookData === "object") s += 1;
+  if (Array.isArray(v.customers)) s += 1;
+  if (Array.isArray(v.questions)) s += 1;
+  if (typeof v.health === "number") s += 1;
+  if (v.island && typeof v.island === "object") s += 1;
+  return s;
 }
 
-// Old Blooket builds expose the game class through _owner.stateNode. React 18
-// dropped _owner, so this only runs as a fallback when the fiber walk is empty.
-function legacyOwnerInstance(doc: Document): AnyNode | null {
-  let current: HTMLElement | null = doc.querySelector("body>div") as HTMLElement | null;
-  let depth = 0;
-  while (current && depth < 800) {
-    try {
-      const stateNode = (Object.values(current) as AnyNode[])[1]?.children?.[0]
-        ?._owner?.stateNode;
-      if (stateNode && isClassInstance(stateNode)) return stateNode;
-    } catch {
-      /* ignore */
-    }
-    const child = current.querySelector?.(":scope>div");
-    if (!child || child === current) break;
-    current = child as HTMLElement;
-    depth++;
+function isController(v: AnyNode): boolean {
+  return (
+    !!v &&
+    typeof v === "object" &&
+    typeof v.setVal === "function" &&
+    (typeof v.getDatabaseVal === "function" || typeof v.getVal === "function")
+  );
+}
+
+const HTML_INPUT_TYPES = new Set([
+  "checkbox",
+  "text",
+  "number",
+  "password",
+  "email",
+  "radio",
+  "button",
+  "submit",
+  "range",
+  "color",
+  "date",
+  "hidden",
+  "search",
+  "tel",
+  "url",
+]);
+
+const KNOWN_MODES = new Set([
+  "gold",
+  "crypto",
+  "factory",
+  "tower",
+  "racing",
+  "monster",
+  "fishing",
+  "cafe",
+  "classic",
+  "naval",
+  "defense",
+  "hacks",
+  "kingdom",
+  "island",
+]);
+
+function clientScore(v: AnyNode): number {
+  if (!v || typeof v !== "object" || typeof v.name !== "string") return 0;
+  let s = 0;
+  if (typeof v.blook === "string") s += 4;
+  if (typeof v.isRandom === "boolean") s += 2;
+  if (v.question && typeof v.question === "object") s += 3;
+  if (typeof v.b === "string") s += 1;
+  if (typeof v.isHost === "boolean") s += 1;
+  if (typeof v.type === "string") {
+    if (HTML_INPUT_TYPES.has(v.type)) return 0;
+    if (KNOWN_MODES.has(v.type)) s += 3;
+    else s += 1;
   }
-  return null;
+  return s;
+}
+
+function isClient(v: AnyNode): boolean {
+  return clientScore(v) >= 3;
+}
+
+function isQuestionList(v: AnyNode): boolean {
+  return (
+    !!v &&
+    Array.isArray(v) &&
+    v.length > 0 &&
+    !!v[0] &&
+    typeof v[0] === "object" &&
+    Array.isArray(v[0].answers) &&
+    Array.isArray(v[0].correctAnswers)
+  );
+}
+
+interface HookFindings {
+  state: AnyNode | null;
+  stateHook: AnyNode | null;
+  ctrl: AnyNode | null;
+  client: AnyNode | null;
+  lists: AnyNode[];
+  methods: Record<string, AnyNode>;
+  stateCandidates: number;
+}
+
+function hookScan(): HookFindings {
+  const out: HookFindings = {
+    state: null,
+    stateHook: null,
+    ctrl: null,
+    client: null,
+    lists: [],
+    methods: {},
+    stateCandidates: 0,
+  };
+  let bestScore = 0;
+  let bestCtor: AnyNode | null = null;
+  let bestClient: AnyNode | null = null;
+  let bestClientScore = 0;
+
+  const adoptClient = (o: AnyNode) => {
+    const cs = clientScore(o);
+    if (cs > bestClientScore) {
+      bestClientScore = cs;
+      bestClient = o;
+    }
+  };
+
+  const consider = (v: AnyNode) => {
+    if (!v || typeof v !== "object") return;
+    const direct = v.current && typeof v.current === "object" ? [v, v.current] : [v];
+    for (const o of direct) {
+      if (!o || typeof o !== "object") continue;
+      if (!out.ctrl && isController(o)) out.ctrl = o;
+      if (isClient(o)) adoptClient(o);
+      if (o.client && isClient(o.client)) adoptClient(o.client);
+      if (isQuestionList(o)) out.lists.push(o);
+      const sc = stateScore(o);
+      if (sc > 0) out.stateCandidates += 1;
+      if (sc > bestScore) {
+        bestScore = sc;
+        bestCtor = o;
+      }
+      for (const m of METHOD_NAMES) {
+        if (!out.methods[m] && typeof o[m] === "function") out.methods[m] = o[m];
+      }
+      for (const k of ["liveGameController", "controller", "gameController"]) {
+        const c = o[k];
+        if (!out.ctrl && isController(c)) out.ctrl = c;
+      }
+    }
+  };
+
+  const fibers = collectFibers();
+  for (const f of fibers) {
+    const props = f.memoizedProps;
+    if (props && typeof props === "object") {
+      consider(props);
+      if (props.value && typeof props.value === "object") consider(props.value);
+    }
+    let h = f.memoizedState;
+    while (h) {
+      const v = h.memoizedState;
+      if (v && typeof v === "object") {
+        consider(v);
+        if (Array.isArray(v) && v.length === 2 && typeof v[1] === "function" && v[0] && typeof v[0] === "object") {
+          consider(v[0]);
+        }
+      }
+      h = h.next;
+    }
+  }
+
+  if (bestScore >= 4 && bestCtor) {
+    out.state = bestCtor;
+    for (const f of fibers) {
+      if (typeof f.type !== "function") continue;
+      let h = f.memoizedState;
+      while (h) {
+        const v = h.memoizedState;
+        if (
+          v === bestCtor ||
+          (v && v.current === bestCtor) ||
+          (Array.isArray(v) && v[0] === bestCtor)
+        ) {
+          out.stateHook = h;
+          break;
+        }
+        h = h.next;
+      }
+      if (out.stateHook) break;
+    }
+  }
+  out.client = bestClient;
+  return out;
 }
 
 function findInstance(): AnyNode | null {
-  const inst = findGameInstance();
-  if (inst) return inst;
   for (const doc of allDocuments()) {
-    const legacy = legacyOwnerInstance(doc);
-    if (legacy) return legacy;
+    const ref = referenceInstance(doc);
+    if (ref) return ref;
   }
+  const cls = bestClassInstance();
+  if (cls) return cls;
   return null;
 }
 
-function wrapNode(inst: AnyNode): AnyNode {
-  const ctrl = inst.props?.liveGameController ?? null;
-  const client = inst.props?.client ?? null;
-  return new Proxy(inst, {
+function wrapNode(inst: AnyNode, hooks: HookFindings): AnyNode {
+  let stateObj: AnyNode = null;
+  if (inst && inst.state && typeof inst.state === "object") stateObj = inst.state;
+  else stateObj = hooks.state ?? null;
+  const stateHook = hooks.stateHook ?? null;
+  const ctrl = inst?.props?.liveGameController ?? hooks.ctrl ?? null;
+  const client = inst?.props?.client ?? hooks.client ?? null;
+  const lists = hooks.lists.length ? hooks.lists : null;
+
+  const syncState = () => {
+    if (inst && inst.state && typeof inst.state === "object" && inst.state !== stateObj) {
+      stateObj = inst.state;
+    }
+    if (!inst && stateHook) {
+      const hv = stateHook.memoizedState;
+      const candidate =
+        Array.isArray(hv) && hv.length >= 1 && hv[0] && typeof hv[0] === "object" ? hv[0] : hv;
+      if (candidate && typeof candidate === "object" && candidate !== stateObj) {
+        stateObj = candidate;
+      }
+    }
+  };
+
+  const setStateViaHook = (patch: AnyNode) => {
+    if (!stateObj || typeof stateObj !== "object") return;
+    syncState();
+    try {
+      Object.assign(stateObj, patch);
+    } catch {
+      /* ignore */
+    }
+    if (stateHook?.queue?.dispatch) {
+      try {
+        stateHook.queue.dispatch((prev: AnyNode) => ({ ...(prev ?? stateObj), ...patch }));
+      } catch {
+        /* ignore */
+      }
+    }
+  };
+
+  const target = inst ?? {};
+
+  return new Proxy(target, {
     get(t, prop: string) {
+      if (prop === "state") {
+        syncState();
+        return stateObj;
+      }
+      if (prop === "props") {
+        const base = inst?.props ?? {};
+        return {
+          ...base,
+          client,
+          liveGameController: ctrl,
+          questions: lists ? lists[0] : base.questions ?? [],
+          freeQuestions: lists ? lists[0] : base.freeQuestions ?? [],
+          question: stateObj?.question ?? client?.question ?? base.client?.question ?? null,
+        };
+      }
+      if (prop === "client") return client ?? inst?.props?.client ?? null;
+      if (prop === "setState") {
+        return (patch: AnyNode) => {
+          if (inst && typeof inst.setState === "function") {
+            try {
+              inst.setState(patch);
+            } catch {
+              /* ignore */
+            }
+            return;
+          }
+          setStateViaHook(patch);
+        };
+      }
       if (prop === "setVal") {
         return (path: string, val: unknown) => {
           if (!ctrl || typeof ctrl.setVal !== "function") return;
           try {
-            if (ctrl.setVal.length >= 2) ctrl.setVal(path, val);
-            else ctrl.setVal({ path, val });
+            ctrl.setVal({ path, val });
           } catch {
             try {
-              ctrl.setVal({ path, val });
+              ctrl.setVal(path, val);
             } catch {
               /* ignore */
             }
@@ -233,7 +532,7 @@ function wrapNode(inst: AnyNode): AnyNode {
         };
       }
       if (prop === "getVal" || prop === "getDatabaseVal") {
-        return (path: string, cb: (val: any) => void) => {
+        return (path: string, cb: (val: AnyNode) => void) => {
           if (!ctrl) return;
           const fn = ctrl.getDatabaseVal ?? ctrl.getVal;
           if (typeof fn !== "function") return;
@@ -246,24 +545,40 @@ function wrapNode(inst: AnyNode): AnyNode {
         };
       }
       if (prop === "question") {
-        return () => t.state?.question ?? t.props?.client?.question ?? null;
+        return () => stateObj?.question ?? client?.question ?? inst?.props?.client?.question ?? null;
       }
       if (prop === "forceUpdate") {
         return () => {
           try {
-            t.forceUpdate?.();
+            inst?.forceUpdate?.();
           } catch {
             /* ignore */
           }
+          if (!inst && stateHook?.queue?.dispatch) {
+            try {
+              stateHook.queue.dispatch((prev: AnyNode) => ({ ...(prev ?? stateObj) }));
+            } catch {
+              /* ignore */
+            }
+          }
         };
       }
-      if (prop === "client") return client ?? t.props?.client ?? null;
+      if (prop === "freeQuestions" || prop === "questions") {
+        return lists && lists.length ? lists[0] : inst?.[prop] ?? undefined;
+      }
+      for (const m of METHOD_NAMES) {
+        if (prop === m || (METHOD_ALIASES[prop] ?? []).includes(m)) {
+          const fn = inst?.[prop] ?? hooks.methods[prop] ?? hooks.methods[m];
+          if (typeof fn !== "function") return undefined;
+          return fn.bind(inst ?? null);
+        }
+      }
       const v = Reflect.get(t, prop);
       if (typeof v === "function" && prop !== "constructor") return v.bind(t);
       return v;
     },
     set(t, prop: string, value) {
-      t[prop] = value;
+      if (typeof t === "object" && t !== null) t[prop] = value;
       return true;
     },
   });
@@ -274,29 +589,50 @@ let nodeCache: { node: AnyNode | null; at: number } | null = null;
 export function findStateNode(): AnyNode | null {
   const now = Date.now();
   if (nodeCache) {
-    const ttl = nodeCache.node ? 300 : 150;
+    const ttl = nodeCache.node ? 400 : 150;
     if (now - nodeCache.at < ttl) return nodeCache.node;
   }
   const inst = findInstance();
-  const node = inst ? wrapNode(inst) : null;
+  const hooks = hookScan();
+  const node = inst || hooks.state || hooks.ctrl || hooks.client ? wrapNode(inst, hooks) : null;
   nodeCache = { node, at: now };
   return node;
 }
 
+export function findInstanceWithMethod(method: string): AnyNode | null {
+  for (const f of collectFibers()) {
+    const sn = f.stateNode;
+    if (sn && typeof sn[method] === "function") return sn;
+  }
+  const hooks = hookScan();
+  return typeof hooks.methods[method] === "function" ? hooks.methods[method] : null;
+}
+
 export function stateDiagnostics(): Record<string, any> {
   const inst = findInstance();
-  const state = inst?.state ?? {};
+  const hooks = hookScan();
+  const state = hooks.state ?? inst?.state ?? {};
   const props = inst?.props ?? {};
+  const source = inst ? "instance" : hooks.state || hooks.ctrl ? "hooks" : null;
+  const ctrl = props.liveGameController ?? hooks.ctrl ?? null;
+  const client = props.client ?? hooks.client ?? null;
   return {
-    found: !!inst,
-    score: inst ? scoreInstance(inst) : 0,
-    controller: !!props.liveGameController,
-    clientName: props.client?.name ?? null,
-    clientType: props.client?.type ?? null,
-    hasQuestion: !!(state.question || props.client?.question),
-    hasGold: state.gold !== undefined || state.crypto !== undefined || state.cash !== undefined,
+    found: !!inst || !!(hooks.state || hooks.ctrl || hooks.client),
+    source,
+    score: inst ? scoreInstance(inst) : hooks.state ? stateScore(hooks.state) : 0,
+    controller: !!ctrl,
+    clientName: client?.name ?? null,
+    clientType: client?.type ?? null,
+    hasQuestion: !!(state.question || client?.question),
+    hasGold:
+      state.gold !== undefined ||
+      state.crypto !== undefined ||
+      state.cash !== undefined ||
+      state.doubloons !== undefined,
     stage: state.stage ?? state.phase ?? null,
     stateKeys: Object.keys(state).slice(0, 30),
+    hookStates: hooks.stateCandidates,
+    methods: Object.keys(hooks.methods),
     fibers: collectFibers().length,
     devtools: !!(window as AnyNode).__REACT_DEVTOOLS_GLOBAL_HOOK__,
   };
@@ -318,13 +654,21 @@ export function debugDump(): Record<string, any> {
   }
   classes.sort((a, b) => b.score - a.score);
   const inst = findInstance();
+  const hooks = hookScan();
   return {
     url: window.location.href,
     fibers: fibers.length,
     classInstances: classes.slice(0, 8),
+    hookStates: hooks.stateCandidates,
+    hookStateKeys: hooks.state ? Object.keys(hooks.state).slice(0, 16) : [],
+    hasHookController: !!hooks.ctrl,
+    hasHookClient: !!hooks.client,
+    hookMethods: Object.keys(hooks.methods),
     best: inst
       ? { name: inst.constructor?.name ?? "?", score: scoreInstance(inst) }
-      : null,
+      : hooks.state
+        ? { name: "hook-state", score: stateScore(hooks.state) }
+        : null,
     devtools: !!(window as AnyNode).__REACT_DEVTOOLS_GLOBAL_HOOK__,
   };
 }

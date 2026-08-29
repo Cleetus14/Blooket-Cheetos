@@ -37,7 +37,7 @@ export function updateSettings(patch: Partial<CheetosSettings>): CheetosSettings
   try {
     localStorage.setItem(KEY, JSON.stringify(current));
   } catch {
-    /* storage can be blocked; settings still apply for this session */
+    /* ignore */
   }
   return current;
 }

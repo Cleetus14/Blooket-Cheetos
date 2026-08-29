@@ -5,7 +5,7 @@ export function makeInterval(fn: () => void, ms: number): ToggleHandle {
     try {
       fn();
     } catch {
-      /* swallow per-tick errors so one bad frame never kills the loop */
+      /* ignore */
     }
   }, ms);
 

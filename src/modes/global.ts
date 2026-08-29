@@ -18,32 +18,24 @@ type Logger = (msg: string) => void;
 async function addTokensReward(tokens: number, xp: number, log: Logger): Promise<void> {
   const rand = (l: number, h: number) => Math.floor(Math.random() * (h - l + 1)) + l;
   const gameId = GAME_IDS[Math.floor(Math.random() * GAME_IDS.length)];
-  let base: Window | null = window;
-  let frame: HTMLIFrameElement | null = null;
 
   if (window.location.hostname.toLowerCase() !== "play.blooket.com") {
-    frame = document.createElement("iframe");
-    frame.style.display = "none";
-    frame.src = "https://play.blooket.com/";
-    document.body.appendChild(frame);
-    await new Promise<void>((resolve) => {
-      const done = () => resolve();
-      frame!.onload = () => done();
-      frame!.onerror = () => done();
-      setTimeout(done, 8000);
-    });
-    base = frame.contentWindow;
-    if (!base) {
-      frame.remove();
-      log("Add Tokens failed: could not open play.blooket.com");
-      return;
-    }
+    window.open("https://play.blooket.com/", "_blank");
+    log("Add Tokens only runs on play.blooket.com (lobby or in a game). Run the bookmark again on the tab that just opened.");
+    return;
   }
 
-  const fetchJson = async (path: string, init: RequestInit): Promise<any> => {
+  const fetchJson = async (path: string, init: RequestInit): Promise<{ status: number; body: any } | null> => {
     try {
-      const r = await base!.fetch(path, { credentials: "include", ...init });
-      return await r.json();
+      const r = await fetch(path, { credentials: "include", ...init });
+      const text = await r.text();
+      let body: any = null;
+      try {
+        body = JSON.parse(text);
+      } catch {
+        body = { raw: text };
+      }
+      return { status: r.status, body };
     } catch {
       return null;
     }
@@ -54,8 +46,14 @@ async function addTokensReward(tokens: number, xp: number, log: Logger): Promise
       body: JSON.stringify({ gameMode: "Factory", questionSetId: gameId }),
       method: "POST",
     });
-    const t = session?.t;
-    if (!t) throw new Error("could not create solo session");
+    const t = session?.body?.t;
+    if (!t) {
+      log(
+        "Add Tokens failed: could not start a solo game session" +
+          (session && session.status >= 400 ? " (server returned " + session.status + ")." : "."),
+      );
+      return;
+    }
     await fetchJson("https://play.blooket.com/api/playersessions/landings", {
       body: JSON.stringify({ t }),
       method: "POST",
@@ -80,14 +78,42 @@ async function addTokensReward(tokens: number, xp: number, log: Logger): Promise
       body: JSON.stringify({ t, addedTokens: tokens, addedXp: xp }),
       method: "PUT",
     });
-    log(
-      "Added " + tokens + " tokens and " + xp + " XP" +
-        (res?.dailyReward ? " (+daily wheel: " + res.dailyReward + ")" : "") + ".",
-    );
+    if (!res) {
+      log("Add Tokens failed: network error talking to play.blooket.com.");
+      return;
+    }
+    const body = res.body ?? {};
+    const raw = typeof body.raw === "string" ? body.raw : "";
+    const errText = String(body.error ?? body.message ?? "");
+    const onLimit =
+      /limit|cooldown|daily|already|earned/i.test(errText) ||
+      /limit|cooldown|daily|already|earned/i.test(raw);
+    if (onLimit) {
+      log("Add Tokens failed: you are currently on your tokens/XP daily limit, try again later.");
+      return;
+    }
+    if (body.error || body.message) {
+      log("Add Tokens failed: " + errText.slice(0, 200) + ".");
+      return;
+    }
+    if (res.status >= 400) {
+      log(
+        "Add Tokens failed: server returned " + res.status +
+          (raw ? " (" + raw.slice(0, 120) + ")" : "") + ".",
+      );
+      return;
+    }
+    if (typeof body.dailyReward !== "number") {
+      log(
+        "Add Tokens did not credit anything: the server did not confirm the reward" +
+          (raw ? " (response: " + raw.slice(0, 160) + ")" : "") +
+          ". You are likely on the tokens/XP daily limit — try again later.",
+      );
+      return;
+    }
+    log("Added " + tokens + " tokens and " + xp + " XP (+daily wheel: " + body.dailyReward + ").");
   } catch (err) {
     log("Add Tokens failed: " + (err as Error).message);
-  } finally {
-    if (frame) frame.remove();
   }
 }
 
@@ -307,7 +333,7 @@ export const globalCheats: CheatDef[] = [
         api.log("Heads up: the server caps rewards at 500 tokens / 300 XP per run \u2014 larger values get clamped or rejected.");
       }
       if (!window.location.hostname.toLowerCase().includes("blooket.com")) {
-        api.log("Add Tokens works on any blooket.com page (dashboard, lobby, or a live game).");
+        api.log("Add Tokens works on blooket.com. Run it on play.blooket.com.");
         return;
       }
       void addTokensReward(tokens, xp, api.log);

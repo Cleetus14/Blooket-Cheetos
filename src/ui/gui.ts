@@ -97,7 +97,8 @@ function rowEl(): HTMLElement {
 
 function inputEl(): HTMLInputElement {
   return sty(document.createElement("input"), {
-    width: "84px",
+    flex: "1 1 120px",
+    minWidth: "120px",
     background: C.bg3,
     color: "#fafafa",
     border: "1px solid #52525b",
@@ -436,7 +437,8 @@ function injectStyles(): void {
   style.textContent =
     "#cheetos-body::-webkit-scrollbar{width:8px}" +
     "#cheetos-body::-webkit-scrollbar-track{background:#202024}" +
-    "#cheetos-body::-webkit-scrollbar-thumb{background:#3f3f46;border-radius:4px}";
+    "#cheetos-body::-webkit-scrollbar-thumb{background:#3f3f46;border-radius:4px}" +
+    "#cheetos-body{scrollbar-width:thin;scrollbar-color:#3f3f46 #202024;overscroll-behavior:contain}";
   document.head.appendChild(style);
 }
 
@@ -478,6 +480,7 @@ export function mountPanel(api: CheatApi): PanelHandle {
     right: "12px",
     zIndex: "2147483001",
     width: "360px",
+    maxWidth: "calc(100vw - 24px)",
     maxHeight: "84vh",
     display: "flex",
     flexDirection: "column",
@@ -509,7 +512,7 @@ export function mountPanel(api: CheatApi): PanelHandle {
     color: C.gold,
     marginRight: "auto",
   });
-  title.textContent = "Blooket Cheetos V" + VERSION;
+  title.textContent = "Blooket Cheetos V" + VERSION + " — in progress";
 
   const status = sty(document.createElement("span"), {
     fontSize: "10px",
@@ -555,7 +558,7 @@ export function mountPanel(api: CheatApi): PanelHandle {
 
   const body = sty(document.createElement("div"), {
     overflowY: "auto",
-    padding: "8px 10px 12px",
+    padding: "8px 10px 16px",
     flex: "1 1 auto",
     minHeight: "0",
   });
@@ -623,15 +626,19 @@ export function mountPanel(api: CheatApi): PanelHandle {
         whiteSpace: "nowrap",
         fontFamily: C.font,
       });
+      const live = ctx.kind === "game" && ctx.live && ctx.modeId === t.id;
       const active = t.id === selectedTab;
       if (active) {
         btn.style.background = C.accent;
         btn.style.color = "#fff";
       }
-      if (ctx.kind === "game" && ctx.live && ctx.modeId === t.id) {
+      if (live) {
         btn.style.borderColor = "#22c55e";
+        btn.title = t.label + " \u2014 live game";
+      } else {
+        btn.title = t.label;
       }
-      btn.textContent = t.label;
+      btn.textContent = (live ? "\u25cf " : "") + t.label;
       btn.addEventListener("mouseenter", () => {
         if (!active) btn.style.background = "#2c2c31";
       });

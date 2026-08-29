@@ -6,7 +6,7 @@ import { dirname, resolve } from "path";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const watching = process.argv.includes("--watch");
 
-// CSP blocks external scripts, so the bundle ships inline in the bookmark URL.
+// The bundle ships inline in the bookmark URL.
 function makeBookmarklet() {
   const code = readFileSync(resolve(root, "dist/cheetos.js"), "utf8").trim();
   const encoded = encodeURIComponent(code).replace(/'/g, "%27");
