@@ -545,6 +545,119 @@ await sleep(600);
 assert(!!api.node(), "legacy _owner.stateNode fallback finds the game");
 assert(api.client().name === "TestPlayer", "legacy fallback client readable");
 
+// ---- multi-state hooks: question-card state + game state in separate hooks ----
+container.__reactContainer$prod = hostRoot;
+delete container.bb;
+delete container.aa;
+const stA = {
+  question: { qType: "mc", question: "Multi?", answers: ["1", "2"], correctAnswers: ["2"] },
+  choices: [{ type: "gold", val: 1, text: "A" }],
+};
+const stB = { gold: 5, gold2: 5, stage: "question" };
+const hookA = {
+  memoizedState: stA,
+  queue: { dispatch: (u) => { hookA.memoizedState = typeof u === "function" ? u(hookA.memoizedState) : u; } },
+  next: null,
+};
+const hookB = {
+  memoizedState: stB,
+  queue: { dispatch: (u) => { hookB.memoizedState = typeof u === "function" ? u(hookB.memoizedState) : u; } },
+  next: null,
+};
+hookA.next = hookB;
+appFiber.memoizedState = hookA;
+await sleep(700);
+assert(!!api.node(), "multi-state: node found");
+assert(api.node().states.length >= 2, "multi-state: both hook states collected, got " + api.node().states.length);
+api.setState({ gold: 123 });
+assert(stA.gold === 123, "multi-state: patch applied to question-card state");
+assert(stB.gold === 123, "multi-state: patch applied to game state");
+assert(hookB.memoizedState.gold === 123, "multi-state: game-state hook dispatched");
+assert(api.state().gold === 123, "multi-state: node.state reflects the patch");
+assert(
+  api.node().states.some((s) => s.question?.question === "Multi?"),
+  "multi-state: question readable from the state pool",
+);
+
+// ---- client-only: weak match, no state, no controller ----
+const weakClient = { name: "Ghost", type: "gold", blook: "Chick", isRandom: false };
+const weakHook = { memoizedState: { current: weakClient }, queue: null, next: null };
+appFiber.memoizedState = weakHook;
+appFiber.memoizedProps = { type: "checkbox", name: "high-contrast-toggle", onChange: () => {} };
+await sleep(700);
+assert(!!api.node(), "client-only: node object exists");
+assert(api.client().name === "Ghost", "client-only: client readable");
+assert(Object.keys(api.state()).length === 0, "client-only: no state object");
+const testLogStart = consoleLogs.length;
+api.test();
+await sleep(500);
+const testLines = consoleLogs.slice(testLogStart).filter((l) => l.includes("[Cheetos test]"));
+assert(testLines.length >= 1, "client-only: api.test logged a report");
+let weakReport = null;
+if (testLines.length) {
+  try {
+    weakReport = JSON.parse(testLines[0].match(/\[Cheetos test\] (\{.*\})/)?.[1] ?? "null");
+  } catch {
+    weakReport = null;
+  }
+}
+assert(weakReport && weakReport.found === true, "client-only: report found=true");
+assert(weakReport && weakReport.strong === false, "client-only: report strong=false (no game state/controller)");
+assert(weakReport && weakReport.dispatch && weakReport.dispatch.applied === false, "client-only: dispatch probe reports not applied");
+
+// ---- strong scenario: api.test verifies every mechanism ----
+let strongGold = 50;
+const strongSetValCalls = [];
+const strongState = {
+  gold: 50,
+  gold2: 50,
+  stage: "question",
+  question: { qType: "mc", question: "S?", answers: ["a", "b"], correctAnswers: ["b"] },
+};
+const strongClient = { name: "Solo", type: "gold", blook: "Chick" };
+const strongCtrl = {
+  setVal(args) {
+    strongSetValCalls.push(args);
+    if (args.path.endsWith("/g")) strongGold = args.val;
+  },
+  getDatabaseVal(path, cb) {
+    cb(path.endsWith("/g") ? strongGold : { Solo: { g: strongGold, b: "Chick" } });
+  },
+};
+const sState = {
+  memoizedState: strongState,
+  queue: { dispatch: (u) => { sState.memoizedState = typeof u === "function" ? u(sState.memoizedState) : u; } },
+  next: null,
+};
+const sCtrl = { memoizedState: { current: strongCtrl }, queue: null, next: null };
+const sClient = { memoizedState: { current: strongClient }, queue: null, next: null };
+sState.next = sCtrl;
+sCtrl.next = sClient;
+appFiber.memoizedState = sState;
+appFiber.memoizedProps = {};
+await sleep(700);
+const testLogStart2 = consoleLogs.length;
+api.test();
+await sleep(900);
+const testLines2 = consoleLogs.slice(testLogStart2).filter((l) => l.includes("[Cheetos test]"));
+assert(testLines2.length >= 1, "strong: api.test logged a report");
+let strongReport = null;
+if (testLines2.length) {
+  try {
+    strongReport = JSON.parse(testLines2[0].match(/\[Cheetos test\] (\{.*\})/)?.[1] ?? "null");
+  } catch {
+    strongReport = null;
+  }
+}
+assert(strongReport && strongReport.strong === true, "strong: report strong=true");
+assert(strongReport && strongReport.controller === true, "strong: report controller=true");
+assert(strongReport && strongReport.clientName === "Solo", "strong: report clientName=Solo");
+assert(strongReport && strongReport.answerContainers === 3, "strong: report answerContainers=3");
+assert(strongReport && strongReport.dispatch && strongReport.dispatch.applied === true, "strong: dispatch probe applied (setState reached the live state)");
+assert(strongReport && strongReport.setVal && strongReport.setVal.wrote === true, "strong: setVal probe wrote c/Solo/g and read it back");
+assert(strongReport && strongReport.setVal && strongReport.setVal.restored === true, "strong: setVal probe restored the original gold");
+assert(strongGold === 50, "strong: controller gold value restored to 50");
+
 console.log = origLog;
 if (failures) {
   console.error("runtime sim: " + failures + " failure(s)");

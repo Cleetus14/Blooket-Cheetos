@@ -35,6 +35,7 @@ export interface CheatApi {
   kickPlayer(name: string): string[];
   interval(fn: () => void, ms: number): ToggleHandle;
   runCheat(id: string, args?: Record<string, string>): unknown;
+  test(): void;
   log(msg: string): void;
 }
 

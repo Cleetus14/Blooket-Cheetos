@@ -34,6 +34,13 @@ export function bootstrap(): void {
     );
     return dump;
   };
+  (window as any).__cheetosTest = () => {
+    try {
+      api.test();
+    } catch (err) {
+      api.log("Diagnostic failed: " + String(err));
+    }
+  };
 
   const panel = mountPanel(api);
   (window as any).__cheetosTeardown = () => {
@@ -75,8 +82,14 @@ export function bootstrap(): void {
         "color:#facc15",
         "color:inherit",
       );
-      if (found && ctx.kind === "game") {
-        api.log("Game state found. Cheats ready.");
+      if (ctx.kind === "game") {
+        if (diag.strong && diag.controller) {
+          api.log("Game state + controller found. Cheats ready.");
+        } else if (diag.strong) {
+          api.log("Game state found, but no live game controller is exposed \u2014 Auto Answer, Highlight, and Every Answer Correct will work; gold/kick cheats will be limited. Click the Run Diagnostic button for details.");
+        } else if (diag.found) {
+          api.log("Weak match only (no game state or controller yet). Cheats will engage when a live game loads. Click the Run Diagnostic button for details.");
+        }
       }
     }
   };

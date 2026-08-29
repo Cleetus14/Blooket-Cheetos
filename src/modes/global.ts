@@ -125,15 +125,35 @@ export const globalCheats: CheatDef[] = [
     kind: "toggle",
     description: "Answers automatically from the live game state. Humanizer only adds optional pacing.",
     run(api) {
+      let lastSig = "";
+      let lastWaitLog = 0;
       return api.interval(() => {
         const node = api.node();
         if (!node) return;
+        const q = api.question();
+        if (!q || !Array.isArray(q.answers) || !q.answers.length) {
+          const now = Date.now();
+          if (now - lastWaitLog > 6000) {
+            lastWaitLog = now;
+            api.log("Auto Answer: waiting for a question...");
+          }
+          return;
+        }
+        const sig = (q.question ?? "") + "|" + q.answers.join("~") + "|" + (q.correctAnswers ?? []).join("~");
+        if (sig !== lastSig) {
+          lastSig = sig;
+          api.log(
+            "Auto Answer: \u201c" + (q.question ?? "?") + "\u201d [" + (q.qType ?? "mc") + "]",
+          );
+        }
         const state = node.state ?? {};
-        const q = state.question ?? node.props?.client?.question ?? null;
-        if (!q || !Array.isArray(q.answers) || !q.answers.length) return;
+        const inFeedback =
+          state.stage === "feedback" ||
+          !!state.feedback ||
+          (state.stage === undefined && !!document.querySelector("[class*='feedback'], [id*='feedback']"));
 
         if (q.qType !== "typing") {
-          if (state.stage === "feedback" || state.feedback) {
+          if (inFeedback) {
             clickFeedbackAdvance();
           } else {
             let ind = -1;

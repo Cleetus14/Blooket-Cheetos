@@ -339,10 +339,6 @@ function buildSettingsGroup(): HTMLElement {
     settingNumber("Accuracy (%)", () => getSettings().accuracy, (v) => updateSettings({ accuracy: clampInt(v, 1, 100) })),
   );
 
-  group.appendChild(
-    hintEl("Lower accuracy makes Auto Answer miss occasionally so streaks stay believable. 100% never misses."),
-  );
-
   return group;
 }
 
@@ -566,14 +562,33 @@ export function mountPanel(api: CheatApi): PanelHandle {
   panel.appendChild(body);
 
   const footer = sty(document.createElement("div"), {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
     padding: "6px 12px",
     fontSize: "11px",
     color: C.faint,
     borderTop: "1px solid " + C.border,
     background: C.bg2,
-    textAlign: "center",
   });
-  footer.textContent = "Ctrl+Shift+X (or Ctrl+Shift+E) hides/shows this panel";
+  const footerHint = sty(document.createElement("span"), { flex: "1 1 auto", color: C.faint });
+  footerHint.textContent = "Ctrl+Shift+X / E hides or shows this panel";
+  const testBtn = sty(document.createElement("button"), {
+    background: C.bg3,
+    color: C.text,
+    border: "1px solid " + C.border,
+    borderRadius: "6px",
+    padding: "4px 10px",
+    fontSize: "11px",
+    cursor: "pointer",
+    fontFamily: C.font,
+    whiteSpace: "nowrap",
+  });
+  testBtn.textContent = "Run Diagnostic";
+  testBtn.title = "Tests every detection + mutation path and logs the result to the console. Paste the [Cheetos test] line when reporting issues.";
+  testBtn.addEventListener("click", () => api.test());
+  footer.appendChild(footerHint);
+  footer.appendChild(testBtn);
   panel.appendChild(footer);
 
   root.appendChild(panel);

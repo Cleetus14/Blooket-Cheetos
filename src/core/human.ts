@@ -17,11 +17,6 @@ export function humanPause(): Promise<void> {
   return sleep(randomDelay(s.minDelay, s.maxDelay));
 }
 
-export function shouldMiss(accuracy: number): boolean {
-  const acc = Math.max(0, Math.min(100, accuracy));
-  return Math.random() * 100 > acc;
-}
-
 let lastVisualSig = "";
 
 export async function typeAnswerHuman(answer: string): Promise<boolean> {
