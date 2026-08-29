@@ -11,54 +11,80 @@ function textMatches(el: Element, text: string): boolean {
   return t === needle;
 }
 
-function findAnswerByText(text: string): HTMLElement | null {
+function isClickable(el: Element): boolean {
+  if (el.tagName === "BUTTON") return true;
+  if (typeof el.getAttribute === "function" && el.getAttribute("role") === "button") return true;
+  try {
+    if (getComputedStyle(el).cursor === "pointer") return true;
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
+
+export function correctIndex(question: Question): number {
+  for (let i = 0; i < question.answers.length; i++) {
+    for (let j = 0; j < question.correctAnswers.length; j++) {
+      if (question.answers[i] === question.correctAnswers[j]) return i;
+    }
+  }
+  return -1;
+}
+
+export function answerElementByText(text: string): HTMLElement | null {
   if (!text) return null;
-  const candidates = Array.from(
+  const needle = text.trim().toLowerCase();
+  const els = Array.from(
     doc().querySelectorAll("div,button,span,p,[role='button']"),
   ) as HTMLElement[];
-  for (const el of candidates) {
-    if (!textMatches(el, text)) continue;
-    const style = getComputedStyle(el);
-    if (
-      el.tagName === "BUTTON" ||
-      el.getAttribute("role") === "button" ||
-      style.cursor === "pointer"
-    ) {
-      return el;
-    }
+  const exact: HTMLElement[] = [];
+  for (const el of els) {
+    if (textMatches(el, text)) exact.push(el);
   }
-  for (const el of candidates) {
-    if (textMatches(el, text)) return el;
+  if (exact.length) {
+    for (const el of exact) if (isClickable(el)) return el;
+    return exact[exact.length - 1];
   }
-  const needle = text.trim().toLowerCase();
-  for (const el of candidates) {
+  for (const el of els) {
     const t = (el.textContent ?? "").trim().toLowerCase();
-    if (t.length > 0 && t.length <= 80 && t.includes(needle)) {
-      const style = getComputedStyle(el);
-      if (
-        el.tagName === "BUTTON" ||
-        el.getAttribute("role") === "button" ||
-        style.cursor === "pointer"
-      ) {
-        return el;
-      }
-    }
+    if (!t || t.length > 120 || !t.includes(needle)) continue;
+    if (isClickable(el)) return el;
   }
   return null;
 }
 
+export function answerTextOnScreen(text: string): boolean {
+  return !!answerElementByText(text);
+}
+
+export function clickAnswerText(text: string): boolean {
+  const el = answerElementByText(text);
+  if (el) {
+    el.click();
+    return true;
+  }
+  return false;
+}
+
+function findAnswerByText(text: string): HTMLElement | null {
+  return answerElementByText(text);
+}
+
 export function clickAnswer(question: Question, index: number): boolean {
   const answer = question.answers[index];
+  if (answer && clickAnswerText(answer)) return true;
   const nodes = doc().querySelectorAll("[class*='answerContainer']");
   const el = nodes[index] as HTMLElement | undefined;
   if (el) {
     el.click();
     return true;
   }
-  const byText = findAnswerByText(answer);
-  if (byText) {
-    byText.click();
-    return true;
+  if (answer) {
+    const byText = findAnswerByText(answer);
+    if (byText) {
+      byText.click();
+      return true;
+    }
   }
   return false;
 }
@@ -106,10 +132,15 @@ export function clickChoiceByText(text: string): boolean {
 }
 
 export function clickCorrect(question: Question): boolean {
+  const idx = correctIndex(question);
+  if (idx >= 0) {
+    const text = question.answers[idx];
+    if (text && clickAnswerText(text)) return true;
+  }
+  for (const answer of question.correctAnswers) {
+    if (clickAnswerText(answer)) return true;
+  }
   const nodes = doc().querySelectorAll("[class*='answerContainer']");
-  const idx = question.answers.findIndex(
-    (a) => question.correctAnswers.indexOf(a) !== -1,
-  );
   const el = nodes[idx] as HTMLElement | undefined;
   if (el) {
     el.click();
@@ -148,20 +179,16 @@ export function clickAnswerContainerAt(index: number, fallbackText?: string): bo
   return false;
 }
 
-export function clickFeedbackAdvance(): boolean {
-  for (const doc of allDocuments()) {
-    try {
-      const el = doc.querySelector("[class*='feedback'], [id*='feedback']") as HTMLElement | null;
-      const child = el?.firstChild as HTMLElement | null;
-      if (child && typeof (child as any).click === "function") {
-        (child as any).click();
-        return true;
-      }
-    } catch {
-      /* ignore */
-    }
-  }
+export function clickCorrectAnswer(question: Question): boolean {
+  const idx = correctIndex(question);
+  const text = idx >= 0 ? question.answers[idx] : question.correctAnswers[0];
+  if (text && clickAnswerText(text)) return true;
+  if (idx >= 0 && clickAnswerContainerAt(idx, text)) return true;
   return false;
+}
+
+export function clickFeedbackAdvance(): boolean {
+  return advanceFeedback();
 }
 
 function typingInput(): HTMLInputElement | null {

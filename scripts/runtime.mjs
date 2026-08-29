@@ -57,6 +57,9 @@ class FakeEl {
     Object.defineProperty(this, "placeholder", { value: "", writable: true, enumerable: false });
     Object.defineProperty(this, "title", { value: "", writable: true, enumerable: false });
   }
+  getAttribute(name) {
+    return this[name] !== undefined ? String(this[name]) : null;
+  }
   appendChild(c) {
     this.children.push(c);
     c.parentNode = this;
@@ -657,6 +660,215 @@ assert(strongReport && strongReport.dispatch && strongReport.dispatch.applied ==
 assert(strongReport && strongReport.setVal && strongReport.setVal.wrote === true, "strong: setVal probe wrote c/Solo/g and read it back");
 assert(strongReport && strongReport.setVal && strongReport.setVal.restored === true, "strong: setVal probe restored the original gold");
 assert(strongGold === 50, "strong: controller gold value restored to 50");
+
+// ---- modern live shape (Aug 2026): function components only, question in props under `text`,
+//      correctAnswers as texts, answer buttons WITHOUT answerContainer classes ----
+fakeDocument.feedbackEl = null;
+typingComp.stateNode = null;
+const sendAnswers = [];
+const textClicks = [];
+const qcardState = {
+  question: {
+    text: "When should I study?",
+    answers: [
+      "before school or during free time",
+      "while my teacher is teaching",
+      "during lunch",
+      "at midnight",
+    ],
+    correctAnswers: ["while my teacher is teaching"],
+  },
+  feedback: null,
+  slideIn: true,
+  slideOut: false,
+  theme: {},
+  sendAnswer: (text) => sendAnswers.push(text),
+  sendAnswerNext: () => {},
+  settings: { time: 30 },
+  dontAdvanceQuestion: false,
+};
+const qcardHook = {
+  memoizedState: qcardState,
+  queue: { dispatch: (u) => { qcardHook.memoizedState = typeof u === "function" ? u(qcardHook.memoizedState) : u; } },
+  next: null,
+};
+appFiber.type = () => {};
+appFiber.stateNode = null;
+appFiber.memoizedState = qcardHook;
+appFiber.memoizedProps = { question: qcardState.question };
+appFiber.dependencies = { firstContext: null };
+
+const textEls = [];
+const mkTextEl = (text) => {
+  const el = fakeDocument.createElement("div");
+  el.textContent = text;
+  el.click = () => textClicks.push(text);
+  textEls.push(el);
+  return el;
+};
+[
+  "before school or during free time",
+  "while my teacher is teaching",
+  "during lunch",
+  "at midnight",
+].forEach(mkTextEl);
+fakeDocument.textEls = textEls;
+fakeDocument.querySelectorAll = (sel) => {
+  if (sel === "iframe") return [];
+  if (sel === "body *") return fakeDocument.domRoots;
+  if (sel === "div,button,span,p,[role='button']") return fakeDocument.textEls;
+  if (sel.includes("answerContainer")) return [];
+  return [];
+};
+await sleep(700);
+
+assert(!!api.node(), "modern: node found (hooks only, no class instances)");
+const mq = api.question();
+assert(!!mq && mq.question === "When should I study?", "modern: question resolved from props (text key), got " + (mq && mq.question));
+assert(
+  !!mq && mq.correctAnswers.join(",") === "while my teacher is teaching",
+  "modern: correctAnswers resolved from texts, got " + (mq && mq.correctAnswers.join(",")),
+);
+assert(
+  api.state().sendAnswer === qcardState.sendAnswer,
+  "modern: question-card hook state readable (sendAnswer present)",
+);
+const mqAa = api.runCheat("global-auto-answer");
+assert(!!mqAa, "modern: auto-answer starts");
+await sleep(500);
+assert(
+  textClicks.includes("while my teacher is teaching"),
+  "modern: auto-answer clicked the right text element, got [" + textClicks.join("|") + "]",
+);
+
+qcardState.question = {
+  qType: "typing",
+  text: "Type it",
+  answers: ["hello"],
+  correctAnswers: ["hello"],
+};
+appFiber.memoizedProps = { question: qcardState.question };
+fakeDocument.textEls = ["hello"].map((t) => mkTextEl(t));
+await sleep(700);
+assert(sendAnswers.includes("hello"), "modern: typing answer sent through state sendAnswer");
+sendAnswers.length = 0;
+mqAa.stop();
+
+// ---- modern: correctAnswers as indices ----
+qcardState.question = {
+  text: "Pick the index",
+  answers: ["alpha", "beta", "gamma"],
+  correctAnswers: [1],
+};
+appFiber.memoizedProps = { question: qcardState.question };
+fakeDocument.textEls = ["alpha", "beta", "gamma"].map((t) => mkTextEl(t));
+await sleep(700);
+const miq = api.question();
+assert(
+  !!miq && miq.correctAnswers.join(",") === "beta",
+  "modern: numeric correctAnswers normalized to text, got " + (miq && miq.correctAnswers.join(",")),
+);
+
+// ---- controller + client supplied through React context ----
+const ctxSetValCalls = [];
+const ctxCtrl = {
+  setVal(args) {
+    ctxSetValCalls.push(args);
+  },
+  getDatabaseVal(path, cb) {
+    cb({ CtxPlayer: { g: 1, b: "Chick" } });
+  },
+};
+const ctxClient = { name: "CtxPlayer", type: "gold", blook: "Chick" };
+qcardState.question = { text: "Ctx?", answers: ["a", "b"], correctAnswers: ["b"] };
+appFiber.memoizedProps = { question: qcardState.question };
+fakeDocument.textEls = ["a", "b"].map((t) => mkTextEl(t));
+appFiber.dependencies = {
+  firstContext: { memoizedValue: { liveGameController: ctxCtrl, client: ctxClient }, next: null },
+};
+await sleep(700);
+assert(api.client().name === "CtxPlayer", "context: client readable from context value");
+ctxSetValCalls.length = 0;
+api.setVal("c/CtxPlayer/g", 777);
+assert(
+  ctxSetValCalls.length === 1 && ctxSetValCalls[0].path === "c/CtxPlayer/g" && ctxSetValCalls[0].val === 777,
+  "context: setVal reaches the controller from context",
+);
+
+// ---- firebase namespace fallback ----
+const fbSets = [];
+const fbNs = {
+  database: () => ({
+    ref: (p) => ({
+      set: (v) => {
+        fbSets.push(v);
+      },
+      once: () => Promise.resolve({ val: () => ({ FbPlayer: { g: 5, b: "Chick" } }) }),
+    }),
+  }),
+};
+qcardState.question = { text: "Fb?", answers: ["a", "b"], correctAnswers: ["b"] };
+appFiber.memoizedProps = { question: qcardState.question };
+fakeDocument.textEls = ["a", "b"].map((t) => mkTextEl(t));
+appFiber.dependencies = { firstContext: null };
+const fbHook = { memoizedState: { current: fbNs }, queue: null, next: null };
+qcardHook.next = fbHook;
+await sleep(700);
+fbSets.length = 0;
+api.setVal("c/FbPlayer/g", 42);
+assert(fbSets.length === 1 && fbSets[0] === 42, "firebase: setVal writes through database().ref().set()");
+
+// ---- exact live diagnostic shape (Aug 2026): question-card state holds a placeholder
+//      question ("?" with no answers), the real question lives only on a sibling fiber's
+//      props, and the client is nested inside a hook value ({state, client}) ----
+const onAnswerCalls = [];
+const liveFull = {
+  text: "Live shape?",
+  answers: ["red", "green", "blue"],
+  correctAnswers: ["green"],
+};
+const liveClient = { name: "LivePlayer", type: "gold", blook: "Chick", g: 9, isRandom: false };
+const liveHookVal = {
+  state: { stage: "question", choices: ["r", "g", "b"], clients: { LivePlayer: { g: 9 } } },
+  client: liveClient,
+};
+const liveHook = { memoizedState: liveHookVal, queue: { dispatch: () => {} }, next: null };
+qcardState.question = { question: "?", answers: [] };
+appFiber.memoizedProps = { question: qcardState.question };
+appFiber.dependencies = { firstContext: null };
+qcardHook.next = null;
+fakeDocument.textEls = ["red", "green", "blue"].map((t) => mkTextEl(t));
+gameFiber.memoizedState = liveHook;
+gameFiber.memoizedProps = { question: liveFull, onAnswer: (t, c) => onAnswerCalls.push([t, c]) };
+await sleep(700);
+
+const lq = api.question();
+assert(
+  !!lq && lq.question === "Live shape?" && lq.correctAnswers.join(",") === "green",
+  "live-shape: question resolved from sibling fiber props, got " + (lq && lq.question),
+);
+assert(
+  api.client().name === "LivePlayer",
+  "live-shape: client found nested inside a hook value, got " + api.client().name,
+);
+assert(
+  api.node().states.some((s) => s.sendAnswer === qcardState.sendAnswer),
+  "live-shape: question-card state present in the state pool",
+);
+assert(
+  api.node().states.some(
+    (s) => s && s.stage === "question" && s.choices && s.choices.join(",") === "r,g,b",
+  ),
+  "live-shape: game screen state found via nested hook",
+);
+const laa = api.runCheat("global-auto-answer");
+assert(!!laa, "live-shape: auto-answer starts");
+await sleep(500);
+assert(
+  textClicks.includes("green"),
+  "live-shape: auto-answer clicked the correct answer text, got [" + textClicks.join("|") + "]",
+);
+laa.stop();
 
 console.log = origLog;
 if (failures) {

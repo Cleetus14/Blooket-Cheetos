@@ -4,9 +4,12 @@ const FIBER_PREFIXES = ["__reactFiber$", "__reactInternalInstance$", "__reactCon
 
 const METHOD_NAMES = [
   "sendAnswer",
+  "sendAnswerNext",
+  "onAnswer",
   "choosePrize",
   "kickPlayer",
   "removePlayer",
+  "removeVal",
   "disconnectPlayer",
   "sellBlook",
   "answerNext",
@@ -256,24 +259,62 @@ function stateScore(v: AnyNode): number {
   return s;
 }
 
-function isController(v: AnyNode): boolean {
+function isControllerLike(v: AnyNode): boolean {
   return (
     !!v &&
     typeof v === "object" &&
-    typeof v.setVal === "function" &&
-    (typeof v.getDatabaseVal === "function" || typeof v.getVal === "function")
+    (typeof v.setVal === "function" ||
+      typeof v.removeVal === "function" ||
+      typeof v.removePlayer === "function" ||
+      typeof v.kickPlayer === "function" ||
+      typeof v.disconnectPlayer === "function" ||
+      !!v._liveApp ||
+      typeof v.database === "function" ||
+      typeof v.ref === "function")
   );
 }
 
 function ctrlScore(v: AnyNode): number {
   let s = 0;
-  if (typeof v.setVal === "function") s += 2;
-  if (typeof v.getDatabaseVal === "function") s += 2;
-  if (typeof v.getVal === "function") s += 1;
-  if (typeof v.removePlayer === "function") s += 1;
-  if (typeof v.kickPlayer === "function" || typeof v.disconnectPlayer === "function") s += 1;
-  if (typeof v.mode === "string" || typeof v._gameMode === "string") s += 2;
+  if (typeof v.setVal === "function") s += 100;
+  if (typeof v.getDatabaseVal === "function") s += 4;
+  if (typeof v.getVal === "function") s += 2;
+  if (typeof v.removeVal === "function") s += 2;
+  if (typeof v.removePlayer === "function") s += 2;
+  if (typeof v.kickPlayer === "function" || typeof v.disconnectPlayer === "function") s += 2;
+  if (typeof v.mode === "string" || typeof v._gameMode === "string") s += 4;
+  if (!!v._liveApp) s += 6;
+  if (typeof v.database === "function") s += 3;
+  if (typeof v.ref === "function") s += 2;
   return s;
+}
+
+function firebaseFrom(v: AnyNode): AnyNode | null {
+  if (!v || typeof v !== "object") return null;
+  if (typeof v.database === "function") return v;
+  if (v._liveApp && typeof v._liveApp.database === "function") return v._liveApp;
+  if (v._liveApp && v._liveApp.firebase && typeof v._liveApp.firebase.database === "function") {
+    return v._liveApp.firebase;
+  }
+  if (v.firebase && typeof v.firebase.database === "function") return v.firebase;
+  return null;
+}
+
+function questionTextOf(v: AnyNode): string {
+  if (!v || typeof v !== "object") return "";
+  for (const k of ["question", "text", "prompt", "title"]) {
+    if (typeof v[k] === "string" && v[k]) return v[k];
+  }
+  return "";
+}
+
+function isQuestionShaped(v: AnyNode): boolean {
+  if (!v || typeof v !== "object") return false;
+  const answers = v.answers;
+  if (!Array.isArray(answers) || !answers.length) return false;
+  const c =
+    v.correctAnswers ?? v.correctAnswer ?? v.correct ?? v.answer;
+  return Array.isArray(c) ? c.length > 0 : typeof c === "string" || typeof c === "number";
 }
 
 const HTML_INPUT_TYPES = new Set([
@@ -318,7 +359,9 @@ function clientScore(v: AnyNode): number {
     typeof v.isRandom === "boolean" ||
     typeof v.isHost === "boolean" ||
     (v.question && typeof v.question === "object") ||
-    typeof v.b === "string";
+    typeof v.b === "string" ||
+    typeof v.g === "number" ||
+    (typeof v.type === "string" && KNOWN_MODES.has(v.type));
   if (!strong) return 0;
   let s = 0;
   if (typeof v.blook === "string") s += 4;
@@ -359,6 +402,9 @@ interface ScanResult {
   ctrlCandidates: number;
   client: AnyNode | null;
   lists: AnyNode[];
+  questions: AnyNode[];
+  firebase: AnyNode | null;
+  contextValues: number;
   methods: Record<string, { fn: AnyNode; owner: AnyNode | null }>;
   stateCandidates: number;
 }
@@ -371,6 +417,9 @@ function deepScan(): ScanResult {
     ctrlCandidates: 0,
     client: null,
     lists: [],
+    questions: [],
+    firebase: null,
+    contextValues: 0,
     methods: {},
     stateCandidates: 0,
   };
@@ -378,6 +427,7 @@ function deepScan(): ScanResult {
   let bestClientScore = 0;
   let bestCtrlScore = -1;
   const seenStates = new Set<AnyNode>();
+  const considered = new Set<AnyNode>();
 
   const adoptCtrl = (o: AnyNode) => {
     const cs = ctrlScore(o);
@@ -388,9 +438,17 @@ function deepScan(): ScanResult {
     }
   };
 
-  const consider = (o: AnyNode, hook: AnyNode | null, fiber: AnyNode | null) => {
+  const pushQuestion = (q: AnyNode) => {
+    if (isQuestionShaped(q) && !out.questions.includes(q)) out.questions.push(q);
+  };
+
+  const consider = (o: AnyNode, hook: AnyNode | null, fiber: AnyNode | null, asState = true) => {
     if (!o || typeof o !== "object") return;
-    if (isController(o)) adoptCtrl(o);
+    if (considered.has(o)) return;
+    considered.add(o);
+    if (isControllerLike(o)) adoptCtrl(o);
+    const fb = firebaseFrom(o);
+    if (fb && !out.firebase) out.firebase = fb;
     const cs = clientScore(o);
     if (cs > bestClientScore) {
       bestClientScore = cs;
@@ -411,19 +469,44 @@ function deepScan(): ScanResult {
         out.lists.push(sub);
       }
     }
+    pushQuestion(o);
+    for (const k of ["question", "text", "prompt", "currentQuestion", "questionData"]) {
+      const sub = o[k];
+      if (sub && typeof sub === "object") pushQuestion(sub);
+    }
+    for (const k of ["questions", "freeQuestions", "questionSet"]) {
+      const arr = o[k];
+      if (Array.isArray(arr)) {
+        for (const q of arr) if (q && typeof q === "object") pushQuestion(q);
+      }
+    }
     const sc = stateScore(o);
-    if (sc > 0) out.stateCandidates += 1;
-    if (sc >= 4 && !seenStates.has(o)) {
-      seenStates.add(o);
-      out.states.push({ obj: o, hook, fiber });
-      if (sc > bestScore) bestScore = sc;
+    if (asState) {
+      if (sc > 0) out.stateCandidates += 1;
+      if (sc >= 4 && !seenStates.has(o)) {
+        seenStates.add(o);
+        out.states.push({ obj: o, hook, fiber });
+        if (sc > bestScore) bestScore = sc;
+      }
     }
     for (const m of METHOD_NAMES) {
       if (!out.methods[m] && typeof o[m] === "function") out.methods[m] = { fn: o[m], owner: o };
     }
     for (const k of ["liveGameController", "controller", "gameController"]) {
       const c = o[k];
-      if (c && typeof c === "object" && isController(c)) adoptCtrl(c);
+      if (c && typeof c === "object" && isControllerLike(c)) adoptCtrl(c);
+    }
+    if (typeof o.getState === "function") {
+      try {
+        const st = o.getState();
+        if (st && typeof st === "object") consider(st, hook, fiber);
+      } catch {
+        /* ignore */
+      }
+    }
+    for (const k of ["state", "gameState", "game", "data", "value", "current", "store", "snapshot"]) {
+      const sub = o[k];
+      if (sub && typeof sub === "object" && sub !== o) consider(sub, hook, fiber);
     }
   };
 
@@ -433,13 +516,21 @@ function deepScan(): ScanResult {
     if (isClassInstance(sn)) {
       const s = scoreInstance(sn);
       if (!out.inst || s > scoreInstance(out.inst)) out.inst = sn;
-      if (sn.props && typeof sn.props === "object") consider(sn.props, null, f);
+      if (sn.props && typeof sn.props === "object") consider(sn.props, null, f, false);
       if (sn.state && typeof sn.state === "object") consider(sn.state, null, f);
     }
     const props = f.memoizedProps;
     if (props && typeof props === "object") {
-      consider(props, null, f);
+      consider(props, null, f, false);
       if (props.value && typeof props.value === "object") consider(props.value, null, f);
+    }
+    let dep = f.dependencies?.firstContext;
+    while (dep) {
+      if (dep.memoizedValue && typeof dep.memoizedValue === "object") {
+        out.contextValues += 1;
+        consider(dep.memoizedValue, null, f);
+      }
+      dep = dep.next;
     }
     let h = f.memoizedState;
     while (h) {
@@ -483,6 +574,32 @@ function hookValue(hook: AnyNode | null): AnyNode | null {
   return null;
 }
 
+function poolQuestion(scan: ScanResult): AnyNode | null {
+  const pool = scan.questions;
+  if (!pool.length) return null;
+  const seenText = new Set<string>();
+  try {
+    const doc = gameDocument();
+    const els = doc.querySelectorAll("div,button,span,p,[role='button']");
+    const cap = Math.min(els.length, 3000);
+    for (let i = 0; i < cap; i++) {
+      const t = (els[i].textContent ?? "").trim().toLowerCase();
+      if (t && t.length <= 160) seenText.add(t);
+    }
+  } catch {
+    /* ignore */
+  }
+  for (const q of pool.slice().reverse()) {
+    const answers = q.answers;
+    if (!Array.isArray(answers) || !answers.length) continue;
+    for (const a of answers.slice(0, 4)) {
+      const needle = String(a).trim().toLowerCase();
+      if (needle && seenText.has(needle)) return q;
+    }
+  }
+  return pool[pool.length - 1];
+}
+
 function wrapNode(inst: AnyNode | null, scan: ScanResult): AnyNode {
   const stateEntries = scan.states;
   const primary = stateEntries[0] ?? null;
@@ -512,6 +629,9 @@ function wrapNode(inst: AnyNode | null, scan: ScanResult): AnyNode {
     for (const e of stateEntries) {
       const obj = e.hook ? hookValue(e.hook) : e.obj;
       if (obj && typeof obj === "object" && !objs.includes(obj)) objs.push(obj);
+      if (e.obj && e.obj !== obj && typeof e.obj === "object" && !objs.includes(e.obj)) {
+        objs.push(e.obj);
+      }
     }
     if (!objs.length && stateObj) objs.push(stateObj);
     return objs;
@@ -555,6 +675,9 @@ function wrapNode(inst: AnyNode | null, scan: ScanResult): AnyNode {
         return stateObj;
       }
       if (prop === "states") return currentStateObjs();
+      if (prop === "questions") return scan.questions.slice();
+      if (prop === "firebase") return scan.firebase;
+      if (prop === "onAnswerOwner") return scan.methods.onAnswer?.owner ?? null;
       if (prop === "lists") return lists ? lists.slice() : [];
       if (prop === "props") {
         const base = inst?.props ?? {};
@@ -600,7 +723,11 @@ function wrapNode(inst: AnyNode | null, scan: ScanResult): AnyNode {
       }
       if (prop === "question") {
         return () =>
-          stateObj?.question ?? client?.question ?? inst?.props?.client?.question ?? null;
+          poolQuestion(scan) ??
+          stateObj?.question ??
+          client?.question ??
+          inst?.props?.client?.question ??
+          null;
       }
       if (prop === "forceUpdate") {
         return () => {
@@ -671,6 +798,10 @@ export function findInstanceWithMethod(method: string): AnyNode | null {
   return rec.fn.bind(rec.owner ?? null);
 }
 
+export function methodOwner(method: string): AnyNode | null {
+  return deepScan().methods[method]?.owner ?? null;
+}
+
 export function stateDiagnostics(): Record<string, any> {
   const inst = findInstance();
   const scan = deepScan();
@@ -713,7 +844,14 @@ export function stateDiagnostics(): Record<string, any> {
     stateKeys: Object.keys(state).slice(0, 30),
     hookStates: scan.stateCandidates,
     states: scan.states.length,
+    questionPool: scan.questions.length,
+    topStates: scan.states.slice(0, 3).map((s) => Object.keys(s.obj).slice(0, 14)),
     ctrlCandidates: scan.ctrlCandidates,
+    ctrlKeys: scan.ctrl ? Object.keys(scan.ctrl).slice(0, 14) : [],
+    firebase: !!scan.firebase,
+    contextValues: scan.contextValues,
+    onAnswer: typeof scan.methods.onAnswer?.fn === "function",
+    sendAnswerNext: typeof scan.methods.sendAnswerNext?.fn === "function",
     lists: scan.lists.length,
     methods: Object.keys(scan.methods),
     fibers: collectFibers().length,

@@ -508,7 +508,7 @@ export function mountPanel(api: CheatApi): PanelHandle {
     color: C.gold,
     marginRight: "auto",
   });
-  title.textContent = "Blooket Cheetos V" + VERSION + " — in progress";
+  title.textContent = "Blooket Cheetos V" + VERSION;
 
   const status = sty(document.createElement("span"), {
     fontSize: "10px",

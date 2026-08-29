@@ -1,11 +1,89 @@
 import type { CheatApi, Question } from "../types";
-import { findStateNode, findInstanceWithMethod, stateDiagnostics, gameDocument } from "./state";
+import {
+  findStateNode,
+  findInstanceWithMethod,
+  stateDiagnostics,
+  gameDocument,
+} from "./state";
 import { makeInterval } from "./interval";
-import { advanceFeedback, clickAnswer, clickCorrect, submitTyping } from "./dom";
-import { isQuestionOnScreen } from "./dom";
+import {
+  advanceFeedback,
+  clickCorrect,
+  clickAnswerText,
+  clickAnswerContainerAt,
+  answerTextOnScreen,
+  submitTyping,
+} from "./dom";
 import { MODES, globalCheats } from "../modes";
 
 let lastSetValWarn = 0;
+
+function normalizeQuestion(raw: any): Question | null {
+  if (!raw || typeof raw !== "object") return null;
+  const answers = Array.isArray(raw.answers)
+    ? raw.answers.filter((a: unknown) => typeof a === "string" || typeof a === "number")
+    : null;
+  if (!answers || !answers.length) return null;
+  let corrects = raw.correctAnswers ?? raw.correctAnswer ?? raw.correct ?? raw.answer;
+  if (!Array.isArray(corrects)) corrects = corrects === undefined || corrects === null ? [] : [corrects];
+  const texts: string[] = [];
+  for (const c of corrects) {
+    if (typeof c === "number") {
+      const t = answers[c];
+      if (t !== undefined) texts.push(String(t));
+    } else if (typeof c === "string") {
+      texts.push(c);
+    }
+  }
+  if (!texts.length && typeof raw.answer === "number") {
+    const t = answers[raw.answer];
+    if (t !== undefined) texts.push(String(t));
+  }
+  let prompt = "";
+  for (const k of ["question", "text", "prompt", "title"]) {
+    if (typeof raw[k] === "string" && raw[k]) {
+      prompt = raw[k];
+      break;
+    }
+  }
+  return {
+    qType: typeof raw.qType === "string" ? raw.qType : "mc",
+    question: prompt,
+    answers: answers.map(String),
+    correctAnswers: texts.length ? texts : answers.map(String),
+  };
+}
+
+function collectQuestionPool(n: any): any[] {
+  const pool: any[] = [];
+  const push = (o: any) => {
+    if (o && typeof o === "object" && !pool.includes(o)) pool.push(o);
+  };
+  const pushList = (l: any) => {
+    if (Array.isArray(l)) for (const q of l) push(q);
+  };
+  const st = n?.state ?? {};
+  push(st.question);
+  push(st.currentQuestion);
+  push(st.questionData);
+  for (const s of n?.states ?? []) {
+    if (!s || typeof s !== "object") continue;
+    push(s.question);
+    push(s.currentQuestion);
+    push(s.questionData);
+    pushList(s.questions);
+    pushList(s.freeQuestions);
+  }
+  for (const q of n?.questions ?? []) push(q);
+  const props = n?.props ?? {};
+  push(props.question);
+  push(props.client?.question);
+  pushList(props.questions);
+  pushList(props.freeQuestions);
+  pushList(props.client?.questions);
+  for (const l of n?.lists ?? []) pushList(l);
+  return pool;
+}
 
 export function createApi(): CheatApi {
   const node = () => findStateNode();
@@ -18,65 +96,89 @@ export function createApi(): CheatApi {
     setState: (patch) => node()?.setState?.(patch),
     setVal: (path, val) => {
       const c = controller();
-      if (!c || typeof c.setVal !== "function") {
-        const now = Date.now();
-        if (now - lastSetValWarn > 5000) {
-          lastSetValWarn = now;
-          api.log("setVal skipped: no live game controller found (path " + path + ").");
-        }
-        return;
-      }
-      try {
-        c.setVal({ path, val });
-      } catch {
+      if (c && typeof c.setVal === "function") {
         try {
-          c.setVal(path, val);
+          c.setVal({ path, val });
+          return;
         } catch {
           /* ignore */
         }
+        try {
+          c.setVal(path, val);
+          return;
+        } catch {
+          /* ignore */
+        }
+      }
+      const fb = node()?.firebase ?? null;
+      if (fb && typeof fb.database === "function") {
+        try {
+          const ref = fb.database().ref(path);
+          if (ref && typeof ref.set === "function") {
+            ref.set(val);
+            return;
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+      const now = Date.now();
+      if (now - lastSetValWarn > 5000) {
+        lastSetValWarn = now;
+        api.log("setVal skipped: no live game controller or firebase found (path " + path + ").");
       }
     },
     getVal: (path, cb) => {
       const c = controller();
       const fn = c?.getDatabaseVal ?? c?.getVal;
-      if (typeof fn !== "function") return;
-      try {
-        const r = fn.call(c, path, cb);
-        if (r && typeof r.then === "function") r.then(cb).catch(() => {});
-      } catch {
-        /* ignore */
+      if (typeof fn === "function") {
+        try {
+          const r = fn.call(c, path, cb);
+          if (r && typeof r.then === "function") r.then(cb).catch(() => {});
+          return;
+        } catch {
+          /* ignore */
+        }
+      }
+      const fb = node()?.firebase ?? null;
+      if (fb && typeof fb.database === "function") {
+        try {
+          const ref = fb.database().ref(path);
+          if (ref && typeof ref.once === "function") {
+            ref.once("value").then((snap: any) => cb(snap?.val ? snap.val() : snap)).catch(() => {});
+            return;
+          }
+        } catch {
+          /* ignore */
+        }
       }
     },
     question: (): Question | null => {
       const n = node();
       if (!n) return null;
-      const direct = n?.state?.question ?? n?.props?.client?.question ?? null;
-      if (direct && Array.isArray(direct.answers) && direct.answers.length) return direct;
-      const candidates: any[] = [];
-      const states = n.states ?? [];
-      for (const s of states) {
-        if (s && typeof s === "object") {
-          if (s.question && Array.isArray(s.question.answers)) candidates.push(s.question);
-          if (Array.isArray(s.questions)) candidates.push(...s.questions);
-          if (Array.isArray(s.freeQuestions)) candidates.push(...s.freeQuestions);
+      const pool = collectQuestionPool(n);
+      const scored = pool
+        .map((raw) => ({ raw, q: normalizeQuestion(raw) }))
+        .filter((x) => x.q);
+      let best: Question | null = null;
+      let bestScore = -1;
+      for (const x of scored) {
+        let onScreen = 0;
+        for (const a of x.q!.answers) {
+          if (answerTextOnScreen(a)) onScreen += 1;
+        }
+        const score =
+          onScreen * 10 + (x.q!.question ? 3 : 0) + Math.min(x.q!.correctAnswers.length, 4);
+        if (score > bestScore) {
+          bestScore = score;
+          best = x.q;
         }
       }
-      const props = n.props ?? {};
-      const lists = [props.questions, props.freeQuestions, props.client?.questions, ...(n.lists ?? [])];
-      for (const l of lists) if (Array.isArray(l)) candidates.push(...l);
-      const seen = new Set<any>();
-      for (const q of candidates) {
-        if (!q || seen.has(q) || !Array.isArray(q.answers) || !q.answers.length) continue;
-        seen.add(q);
-        if (!Array.isArray(q.correctAnswers) || !q.correctAnswers.length) continue;
-        if (q.question && isQuestionOnScreen(q)) return q;
+      if (best) return best;
+      for (const x of scored) {
+        if (x.q!.question) return x.q;
       }
-      for (const q of candidates) {
-        if (!q || seen.has(q) || !Array.isArray(q.answers) || !q.answers.length) continue;
-        seen.add(q);
-        if (Array.isArray(q.correctAnswers) && q.correctAnswers.length && !q.question) return q;
-      }
-      return null;
+      return scored.length ? scored[0].q : null;
     },
     answerCurrent: () => {
       const q = api.question();
@@ -84,13 +186,48 @@ export function createApi(): CheatApi {
     },
     answerIndex: (idx) => {
       const q = api.question();
-      return q ? clickAnswer(q, idx) : false;
+      if (!q || !q.answers[idx]) return false;
+      const text = q.answers[idx];
+      if (clickAnswerText(text)) return true;
+      if (clickAnswerContainerAt(idx, text)) return true;
+      const fn = findInstanceWithMethod("sendAnswer");
+      if (typeof fn === "function") {
+        try {
+          fn.call(null, text, true);
+          return true;
+        } catch {
+          /* ignore */
+        }
+      }
+      return false;
     },
     answerTyping: () => {
       const q = api.question();
-      return q ? submitTyping(q.answers[0]) : false;
+      if (!q) return false;
+      const fn = findInstanceWithMethod("sendAnswer");
+      if (typeof fn === "function") {
+        try {
+          fn.call(null, q.answers[0]);
+          return true;
+        } catch {
+          /* ignore */
+        }
+      }
+      return submitTyping(q.answers[0]);
     },
-    advance: () => advanceFeedback(),
+    advance: () => {
+      if (advanceFeedback()) return true;
+      const fn = findInstanceWithMethod("sendAnswerNext");
+      if (typeof fn === "function") {
+        try {
+          fn.call(null);
+          return true;
+        } catch {
+          /* ignore */
+        }
+      }
+      return false;
+    },
     kickPlayer: (name: string) => {
       const n = node();
       if (!n) return [];
@@ -158,8 +295,16 @@ export function createApi(): CheatApi {
         hasGold: diag.hasGold,
         stage: diag.stage,
         stateKeys: diag.stateKeys,
+        topStates: diag.topStates,
         states: diag.states,
+        questionPool: diag.questionPool,
         methods: diag.methods,
+        onAnswer: diag.onAnswer,
+        sendAnswerNext: diag.sendAnswerNext,
+        ctrlCandidates: diag.ctrlCandidates,
+        ctrlKeys: diag.ctrlKeys,
+        firebase: diag.firebase,
+        contextValues: diag.contextValues,
       };
       const gd = gameDocument();
       try {
@@ -183,6 +328,13 @@ export function createApi(): CheatApi {
         report.feedback = false;
       }
       report.sendAnswer = typeof findInstanceWithMethod("sendAnswer") === "function";
+      const q = api.question();
+      report.resolvedQuestion = q
+        ? { question: q.question, answers: q.answers, correctAnswers: q.correctAnswers }
+        : null;
+      report.answersOnScreen = q
+        ? q.answers.filter((a) => answerTextOnScreen(a)).length
+        : 0;
 
       const emit = () => {
         api.log("[Cheetos test] " + JSON.stringify(report));

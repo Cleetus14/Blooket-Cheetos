@@ -1,6 +1,11 @@
 import type { CheatDef } from "../types";
-import { typeAnswerHuman } from "../core/human";
-import { clickAnswerContainerAt, clickFeedbackAdvance } from "../core/dom";
+import {
+  clickAnswerText,
+  clickAnswerContainerAt,
+  clickFeedbackAdvance,
+  correctIndex,
+} from "../core/dom";
+import { methodOwner } from "../core/state";
 
 const GAME_IDS = [
   "60101da869e8c70013913b59", "625db660c6842334835cb4c6", "60268f8861bd520016eae038",
@@ -143,7 +148,7 @@ export const globalCheats: CheatDef[] = [
         if (sig !== lastSig) {
           lastSig = sig;
           api.log(
-            "Auto Answer: \u201c" + (q.question ?? "?") + "\u201d [" + (q.qType ?? "mc") + "]",
+            "Auto Answer: \u201c" + (q.question || "?") + "\u201d [" + (q.qType ?? "mc") + "]",
           );
         }
         const state = node.state ?? {};
@@ -154,26 +159,36 @@ export const globalCheats: CheatDef[] = [
 
         if (q.qType !== "typing") {
           if (inFeedback) {
-            clickFeedbackAdvance();
-          } else {
-            let ind = -1;
-            for (let i = 0; i < q.answers.length; i++) {
-              let found = false;
-              for (let j = 0; j < q.correctAnswers.length; j++) {
-                if (q.answers[i] == q.correctAnswers[j]) {
-                  found = true;
-                  break;
+            if (!api.advance()) clickFeedbackAdvance();
+            return;
+          }
+          const ind = correctIndex(q);
+          if (ind >= 0) {
+            const text = q.answers[ind];
+            if (!clickAnswerText(text) && !clickAnswerContainerAt(ind, text)) {
+              const node = api.node();
+              const fn = node.sendAnswer;
+              if (typeof fn === "function") {
+                try {
+                  fn.call(null, text, true);
+                } catch {
+                  /* ignore */
+                }
+              } else {
+                const owner = node.onAnswerOwner;
+                const on = owner?.onAnswer;
+                if (typeof on === "function") {
+                  try {
+                    on.call(owner, text, true);
+                  } catch {
+                    /* ignore */
+                  }
                 }
               }
-              if (found) {
-                ind = i;
-                break;
-              }
             }
-            if (ind >= 0) clickAnswerContainerAt(ind, q.answers[ind]);
           }
         } else {
-          void typeAnswerHuman(q.answers[0]);
+          void api.answerTyping();
         }
       }, 50);
     },
@@ -188,12 +203,19 @@ export const globalCheats: CheatDef[] = [
       return api.interval(() => {
         const q = api.question();
         if (!q || q.qType === "typing") return;
-        const holder = document.querySelector("[class*='answersHolder']") as HTMLElement | null;
-        if (!holder) return;
         q.answers.forEach((answer, i) => {
-          const el = holder.querySelector(`:nth-child(${i + 1}) > div`) as HTMLElement | null;
-          if (!el) return;
-          el.style.backgroundColor =
+          const el = document.querySelectorAll(
+            "div,button,span,p,[role='button']",
+          );
+          let target: HTMLElement | null = null;
+          for (const e of Array.from(el) as HTMLElement[]) {
+            if ((e.textContent ?? "").trim().toLowerCase() === answer.trim().toLowerCase()) {
+              target = e;
+              break;
+            }
+          }
+          if (!target) return;
+          target.style.backgroundColor =
             q.correctAnswers.indexOf(answer) !== -1
               ? "rgb(0, 207, 119)"
               : "rgb(189, 15, 38)";
@@ -208,19 +230,32 @@ export const globalCheats: CheatDef[] = [
     kind: "toggle",
     description: "Marks every answer in the set correct as questions load.",
     run(api) {
+      const wrapped = new WeakSet<object>();
       return api.interval(() => {
         const node = api.node();
         if (!node) return;
-        const lists = [node.freeQuestions, node.questions, node.props?.client?.questions];
-        for (const list of lists) {
-          if (!Array.isArray(list)) continue;
-          for (let i = 0; i < list.length; i++) {
-            const q = list[i];
-            if (q && Array.isArray(q.answers)) q.correctAnswers = q.answers;
-          }
+        const mark = (q: any) => {
+          if (q && Array.isArray(q.answers)) q.correctAnswers = q.answers.slice();
+        };
+        for (const p of node.questions ?? []) mark(p);
+        for (const l of node.lists ?? []) {
+          if (Array.isArray(l)) l.forEach(mark);
         }
-        const cur = node.state?.question ?? node.props?.client?.question;
-        if (cur && Array.isArray(cur.answers)) cur.correctAnswers = cur.answers;
+        const fq = node.freeQuestions;
+        if (Array.isArray(fq)) fq.forEach(mark);
+        const qs = node.questions;
+        if (Array.isArray(qs)) qs.forEach(mark);
+        mark(node.state?.question);
+        const owner = node.onAnswerOwner ?? methodOwner("onAnswer");
+        const orig = owner?.onAnswer;
+        if (owner && typeof orig === "function" && !wrapped.has(owner)) {
+          wrapped.add(owner);
+          owner.onAnswer = function (this: unknown) {
+            const args = Array.from(arguments);
+            args[0] = true;
+            return orig.apply(this, args);
+          };
+        }
         try {
           node.forceUpdate?.();
         } catch {
