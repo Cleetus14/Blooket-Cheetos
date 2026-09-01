@@ -1,3 +1,5 @@
+import { VERSION } from "../version";
+
 type AnyNode = any;
 
 const FIBER_PREFIXES = ["__reactFiber$", "__reactInternalInstance$", "__reactContainer$"];
@@ -827,6 +829,7 @@ export function stateDiagnostics(): Record<string, any> {
     !!ctrl ||
     (!!scan.states[0] && (hasQuestion || hasGold || !!state.stage || !!state.phase));
   return {
+    version: VERSION,
     found: !!inst || !!scan.states.length || !!ctrl || !!client,
     strong,
     source,

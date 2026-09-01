@@ -285,6 +285,7 @@ export function createApi(): CheatApi {
       const c = controller();
       const client = api.client();
       const report: Record<string, any> = {
+        version: diag.version,
         found: diag.found,
         strong: diag.strong,
         source: diag.source,
