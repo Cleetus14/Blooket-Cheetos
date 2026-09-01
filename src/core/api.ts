@@ -18,27 +18,64 @@ import { MODES, globalCheats } from "../modes";
 
 let lastSetValWarn = 0;
 
+function answerStrings(raw: any): string[] {
+  for (const k of ["answers", "choices", "options", "answerChoices", "responses"]) {
+    const a = raw[k];
+    if (!Array.isArray(a) || !a.length) continue;
+    const out: string[] = [];
+    for (const item of a) {
+      if (typeof item === "string" || typeof item === "number") {
+        out.push(String(item));
+      } else if (item && typeof item === "object") {
+        const t = item.text ?? item.answerText ?? item.label ?? item.value ?? item.name;
+        if (t !== undefined && t !== null) out.push(String(t));
+      }
+    }
+    if (out.length) return out;
+  }
+  return [];
+}
+
 function normalizeQuestion(raw: any): Question | null {
   if (!raw || typeof raw !== "object") return null;
-  const answers = Array.isArray(raw.answers)
-    ? raw.answers.filter((a: unknown) => typeof a === "string" || typeof a === "number")
-    : null;
-  if (!answers || !answers.length) return null;
-  let corrects = raw.correctAnswers ?? raw.correctAnswer ?? raw.correct ?? raw.answer;
-  if (!Array.isArray(corrects)) corrects = corrects === undefined || corrects === null ? [] : [corrects];
+  const answers = answerStrings(raw);
+  if (!answers.length) return null;
+
   const texts: string[] = [];
-  for (const c of corrects) {
+  const addText = (c: any) => {
     if (typeof c === "number") {
       const t = answers[c];
       if (t !== undefined) texts.push(String(t));
     } else if (typeof c === "string") {
       texts.push(c);
     }
+  };
+
+  const corrects = raw.correctAnswers ?? raw.correctAnswer ?? raw.correct ?? raw.answer;
+  if (Array.isArray(corrects)) {
+    for (const c of corrects) addText(c);
+  } else if (corrects !== undefined && corrects !== null) {
+    addText(corrects);
   }
-  if (!texts.length && typeof raw.answer === "number") {
-    const t = answers[raw.answer];
-    if (t !== undefined) texts.push(String(t));
+
+  const idx = raw.answerIndex ?? raw.correctIndex;
+  if (!texts.length && typeof idx === "number") addText(idx);
+  if (!texts.length && typeof raw.solution === "string") texts.push(raw.solution);
+  if (!texts.length && typeof raw.solution === "number") addText(raw.solution);
+
+  if (!texts.length) {
+    for (const k of ["answers", "choices", "options", "answerChoices", "responses"]) {
+      const a = raw[k];
+      if (!Array.isArray(a)) continue;
+      for (let i = 0; i < a.length; i++) {
+        const item = a[i];
+        if (item && typeof item === "object" && (item.correct === true || item.isCorrect === true)) {
+          texts.push(answers[i]);
+        }
+      }
+    }
   }
+
   let prompt = "";
   for (const k of ["question", "text", "prompt", "title"]) {
     if (typeof raw[k] === "string" && raw[k]) {
@@ -49,8 +86,8 @@ function normalizeQuestion(raw: any): Question | null {
   return {
     qType: typeof raw.qType === "string" ? raw.qType : "mc",
     question: prompt,
-    answers: answers.map(String),
-    correctAnswers: texts.length ? texts : answers.map(String),
+    answers,
+    correctAnswers: texts,
   };
 }
 
@@ -395,34 +432,14 @@ export function createApi(): CheatApi {
       };
 
       const st = n?.state ?? null;
-      if (st && typeof st === "object" && Object.keys(st).length) {
-        const key = "__cheetosTest";
-        const value = Date.now();
-        api.setState({ [key]: value });
-        setTimeout(() => {
-          const st2 = node()?.state ?? null;
-          report.dispatch = {
-            applied: !!(st2 && st2[key] === value),
-            on: diag.source,
-          };
-          try {
-            delete st[key];
-          } catch {
-            /* ignore */
-          }
-          if (st2 && st2 !== st) {
-            try {
-              delete st2[key];
-            } catch {
-              /* ignore */
-            }
-          }
-          finishSetVal();
-        }, 60);
-      } else {
-        report.dispatch = { applied: false, reason: "no state object to patch" };
-        finishSetVal();
-      }
+      report.dispatch = {
+        applied: false,
+        reason:
+          st && typeof st === "object" && Object.keys(st).length
+            ? "disabled (read-only diagnostic; destructive write removed)"
+            : "no state object to patch",
+      };
+      finishSetVal();
     },
     log: (msg) => console.log("%c[Cheetos]%c " + msg, "color:#facc15", "color:inherit"),
   };

@@ -656,7 +656,7 @@ assert(strongReport && strongReport.strong === true, "strong: report strong=true
 assert(strongReport && strongReport.controller === true, "strong: report controller=true");
 assert(strongReport && strongReport.clientName === "Solo", "strong: report clientName=Solo");
 assert(strongReport && strongReport.answerContainers === 3, "strong: report answerContainers=3");
-assert(strongReport && strongReport.dispatch && strongReport.dispatch.applied === true, "strong: dispatch probe applied (setState reached the live state)");
+assert(strongReport && strongReport.dispatch && strongReport.dispatch.applied === false, "strong: dispatch probe read-only (destructive write removed)");
 assert(strongReport && strongReport.setVal && strongReport.setVal.wrote === true, "strong: setVal probe wrote c/Solo/g and read it back");
 assert(strongReport && strongReport.setVal && strongReport.setVal.restored === true, "strong: setVal probe restored the original gold");
 assert(strongGold === 50, "strong: controller gold value restored to 50");

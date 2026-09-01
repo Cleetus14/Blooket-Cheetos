@@ -310,13 +310,29 @@ function questionTextOf(v: AnyNode): string {
   return "";
 }
 
+function answerArrayOf(v: AnyNode): AnyNode | null {
+  if (!v || typeof v !== "object") return null;
+  for (const k of ["answers", "choices", "options", "answerChoices", "responses"]) {
+    const a = v[k];
+    if (Array.isArray(a) && a.length) return a;
+  }
+  return null;
+}
+
 function isQuestionShaped(v: AnyNode): boolean {
   if (!v || typeof v !== "object") return false;
-  const answers = v.answers;
-  if (!Array.isArray(answers) || !answers.length) return false;
+  const answers = answerArrayOf(v);
+  if (!answers) return false;
   const c =
-    v.correctAnswers ?? v.correctAnswer ?? v.correct ?? v.answer;
-  return Array.isArray(c) ? c.length > 0 : typeof c === "string" || typeof c === "number";
+    v.correctAnswers ?? v.correctAnswer ?? v.correct ?? v.answer ??
+    v.answerIndex ?? v.correctIndex ?? v.solution;
+  if (c !== undefined && c !== null) {
+    if (Array.isArray(c)) return c.length > 0;
+    if (typeof c === "string" || typeof c === "number" || typeof c === "boolean") return true;
+  }
+  return answers.some(
+    (a: AnyNode) => a && typeof a === "object" && (a.correct === true || a.isCorrect === true),
+  );
 }
 
 const HTML_INPUT_TYPES = new Set([
@@ -380,14 +396,14 @@ function clientScore(v: AnyNode): number {
 }
 
 function isQuestionList(v: AnyNode): boolean {
+  if (!v || !Array.isArray(v) || !v.length) return false;
+  const first = v[0];
+  if (!first || typeof first !== "object") return false;
   return (
-    !!v &&
-    Array.isArray(v) &&
-    v.length > 0 &&
-    !!v[0] &&
-    typeof v[0] === "object" &&
-    Array.isArray(v[0].answers) &&
-    Array.isArray(v[0].correctAnswers)
+    !!answerArrayOf(first) ||
+    typeof first.question === "string" ||
+    typeof first.text === "string" ||
+    typeof first.prompt === "string"
   );
 }
 
@@ -592,10 +608,11 @@ function poolQuestion(scan: ScanResult): AnyNode | null {
     /* ignore */
   }
   for (const q of pool.slice().reverse()) {
-    const answers = q.answers;
-    if (!Array.isArray(answers) || !answers.length) continue;
+    const answers = answerArrayOf(q);
+    if (!answers) continue;
     for (const a of answers.slice(0, 4)) {
-      const needle = String(a).trim().toLowerCase();
+      const text = a && typeof a === "object" ? (a.text ?? a.answerText ?? a.label ?? a.value) : a;
+      const needle = String(text ?? "").trim().toLowerCase();
       if (needle && seenText.has(needle)) return q;
     }
   }
@@ -804,6 +821,62 @@ export function methodOwner(method: string): AnyNode | null {
   return deepScan().methods[method]?.owner ?? null;
 }
 
+function describe(v: AnyNode, depth = 0): any {
+  if (v === null || v === undefined) return v;
+  if (depth > 2) return "[depth]";
+  if (Array.isArray(v)) {
+    return {
+      type: "array",
+      length: v.length,
+      first: v.length ? describe(v[0], depth + 1) : null,
+    };
+  }
+  if (typeof v === "object") {
+    const keys = Object.keys(v);
+    const out: Record<string, any> = { keys: keys.slice(0, 30) };
+    for (const k of keys.slice(0, 14)) {
+      const val = v[k];
+      if (typeof val === "string") out[k] = String(val).slice(0, 100);
+      else if (typeof val === "number" || typeof val === "boolean") out[k] = val;
+      else if (typeof val === "function") out[k] = "function";
+      else if (Array.isArray(val)) {
+        out[k] = {
+          type: "array",
+          length: val.length,
+          first: val.length ? describe(val[0], depth + 1) : null,
+        };
+      } else if (val && typeof val === "object") {
+        out[k] = { type: "object", keys: Object.keys(val).slice(0, 14) };
+      }
+    }
+    return out;
+  }
+  return typeof v;
+}
+
+function findPropsQuestion(): AnyNode | null {
+  for (const f of collectFibers()) {
+    const p = f.memoizedProps;
+    if (p && typeof p === "object" && p.question && typeof p.question === "object") {
+      return p.question;
+    }
+    const sn = f.stateNode;
+    if (sn && sn.props && typeof sn.props.question === "object") return sn.props.question;
+  }
+  return null;
+}
+
+function describeStateFields(state: AnyNode): Record<string, any> {
+  const out: Record<string, any> = {};
+  for (const k of [
+    "gold", "crypto", "cash", "doubloons", "totalPrizeMoney", "goldEvents",
+    "playerToGameStats", "playerToStatDeltas", "players", "host", "g", "c",
+  ]) {
+    if (state[k] !== undefined) out[k] = describe(state[k]);
+  }
+  return out;
+}
+
 export function stateDiagnostics(): Record<string, any> {
   const inst = findInstance();
   const scan = deepScan();
@@ -849,6 +922,14 @@ export function stateDiagnostics(): Record<string, any> {
     states: scan.states.length,
     questionPool: scan.questions.length,
     topStates: scan.states.slice(0, 3).map((s) => Object.keys(s.obj).slice(0, 14)),
+    questionsInfo: describe(Array.isArray(state.questions) ? state.questions : null),
+    stateQuestionInfo: state.question && typeof state.question === "object" ? describe(state.question) : null,
+    propsQuestionInfo: (() => {
+      const q = findPropsQuestion();
+      return q ? describe(q) : null;
+    })(),
+    goldInfo: describeStateFields(state),
+    clientInfo: client && typeof client === "object" ? describe(client) : null,
     ctrlCandidates: scan.ctrlCandidates,
     ctrlKeys: scan.ctrl ? Object.keys(scan.ctrl).slice(0, 14) : [],
     firebase: !!scan.firebase,
