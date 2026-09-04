@@ -323,12 +323,12 @@ const eacHandle = api.runCheat("global-every-correct");
 assert(!!eacHandle, "every-answer-correct starts");
 await sleep(700);
 assert(
-  gameInst.state.question.correctAnswers.join(",") === "3,4,5",
-  "EAC marked the live question correct, got " + gameInst.state.question.correctAnswers.join(","),
+  gameInst.state.question.correctAnswers.join(",") === "4",
+  "EAC left the live question unmutated (safe, no black screen), got " + gameInst.state.question.correctAnswers.join(","),
 );
 assert(
-  gameInst.freeQuestions[0].correctAnswers.join(",") === "a,b",
-  "EAC marked freeQuestions list correct",
+  gameInst.freeQuestions[0].correctAnswers.join(",") === "a",
+  "EAC left freeQuestions unmutated (safe)",
 );
 eacHandle.stop();
 
@@ -470,12 +470,12 @@ const hooksEac = api.runCheat("global-every-correct");
 assert(!!hooksEac, "hooks tree: every-answer-correct starts");
 await sleep(700);
 assert(
-  hooksState.question.correctAnswers.join(",") === "3,4,5",
-  "hooks tree: EAC marked the live hook question, got " + hooksState.question.correctAnswers.join(","),
+  hooksState.question.correctAnswers.join(",") === "4",
+  "hooks tree: EAC left the live hook question unmutated (safe, no black screen), got " + hooksState.question.correctAnswers.join(","),
 );
 assert(
-  hList.memoizedState[0].correctAnswers.join(",") === "a,b",
-  "hooks tree: EAC marked the hook question list",
+  hList.memoizedState[0].correctAnswers.join(",") === "a",
+  "hooks tree: EAC left the hook question list unmutated (safe)",
 );
 hooksEac.stop();
 

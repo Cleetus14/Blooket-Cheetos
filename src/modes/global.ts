@@ -228,40 +228,20 @@ export const globalCheats: CheatDef[] = [
     label: "Every Answer Correct",
     group: "Global",
     kind: "toggle",
-    description: "Marks every answer in the set correct as questions load.",
+    description: "Submits the answer you pick as correct.",
     run(api) {
-      const wrapped = new WeakSet<object>();
       return api.interval(() => {
-        const node = api.node();
-        if (!node) return;
-        const mark = (q: any) => {
-          if (q && Array.isArray(q.answers)) q.correctAnswers = q.answers.slice();
-        };
-        for (const p of node.questions ?? []) mark(p);
-        for (const l of node.lists ?? []) {
-          if (Array.isArray(l)) l.forEach(mark);
-        }
-        const fq = node.freeQuestions;
-        if (Array.isArray(fq)) fq.forEach(mark);
-        const qs = node.questions;
-        if (Array.isArray(qs)) qs.forEach(mark);
-        mark(node.state?.question);
-        const owner = node.onAnswerOwner ?? methodOwner("onAnswer");
+        const owner = api.node()?.onAnswerOwner ?? methodOwner("onAnswer");
         const orig = owner?.onAnswer;
-        if (owner && typeof orig === "function" && !wrapped.has(owner)) {
-          wrapped.add(owner);
-          owner.onAnswer = function (this: unknown) {
-            const args = Array.from(arguments);
-            args[0] = true;
-            return orig.apply(this, args);
-          };
-        }
-        try {
-          node.forceUpdate?.();
-        } catch {
-          /* ignore */
-        }
-      }, 150);
+        if (!owner || typeof orig !== "function" || (orig as any).__cheetosEAC) return;
+        const wrapped = function (this: unknown) {
+          const args = Array.from(arguments);
+          args[0] = true;
+          return orig.apply(this, args);
+        };
+        (wrapped as any).__cheetosEAC = true;
+        owner.onAnswer = wrapped;
+      }, 400);
     },
   },
   {
