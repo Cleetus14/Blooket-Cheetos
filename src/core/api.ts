@@ -114,10 +114,12 @@ function collectQuestionPool(n: any): any[] {
   for (const q of n?.questions ?? []) push(q);
   const props = n?.props ?? {};
   push(props.question);
+  push(props.currentQuestion);
   push(props.client?.question);
   pushList(props.questions);
   pushList(props.freeQuestions);
   pushList(props.client?.questions);
+  for (const a of n?.answerSources ?? []) push(a.obj);
   for (const l of n?.lists ?? []) pushList(l);
   return pool;
 }
@@ -189,6 +191,12 @@ export function createApi(): CheatApi {
           /* ignore */
         }
       }
+      const now = Date.now();
+      if (now - lastSetValWarn > 5000) {
+        lastSetValWarn = now;
+        api.log("getVal skipped: no live game controller or firebase found (path " + path + ").");
+      }
+      cb(undefined);
     },
     question: (): Question | null => {
       const n = node();
@@ -211,7 +219,22 @@ export function createApi(): CheatApi {
           best = x.q;
         }
       }
-      if (best) return best;
+      if (best) {
+        if (!best.correctAnswers.length) {
+          const prompt = (best.question ?? "").trim().toLowerCase();
+          for (const x of scored) {
+            const qq = x.q!;
+            if (
+              qq.correctAnswers.length &&
+              prompt &&
+              (qq.question ?? "").trim().toLowerCase() === prompt
+            ) {
+              return qq;
+            }
+          }
+        }
+        return best;
+      }
       for (const x of scored) {
         if (x.q!.question) return x.q;
       }

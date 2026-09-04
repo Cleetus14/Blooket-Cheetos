@@ -421,6 +421,7 @@ interface ScanResult {
   client: AnyNode | null;
   lists: AnyNode[];
   questions: AnyNode[];
+  answers: { obj: AnyNode; source: string }[];
   firebase: AnyNode | null;
   contextValues: number;
   methods: Record<string, { fn: AnyNode; owner: AnyNode | null }>;
@@ -436,6 +437,7 @@ function deepScan(): ScanResult {
     client: null,
     lists: [],
     questions: [],
+    answers: [],
     firebase: null,
     contextValues: 0,
     methods: {},
@@ -460,6 +462,25 @@ function deepScan(): ScanResult {
     if (isQuestionShaped(q) && !out.questions.includes(q)) out.questions.push(q);
   };
 
+  const recordAnswers = (q: AnyNode, source: string) => {
+    if (!q || typeof q !== "object") return;
+    const c = q.correctAnswers ?? q.correctAnswer ?? q.correct;
+    const has =
+      Array.isArray(c)
+        ? c.length > 0
+        : c !== undefined && c !== null && c !== "";
+    const arr = answerArrayOf(q);
+    const flagged =
+      Array.isArray(arr) &&
+      arr.some(
+        (a: AnyNode) =>
+          a && typeof a === "object" && (a.correct === true || a.isCorrect === true),
+      );
+    if ((has || flagged) && !out.answers.some((e) => e.obj === q)) {
+      out.answers.push({ obj: q, source });
+    }
+  };
+
   const consider = (o: AnyNode, hook: AnyNode | null, fiber: AnyNode | null, asState = true) => {
     if (!o || typeof o !== "object") return;
     if (considered.has(o)) return;
@@ -479,6 +500,20 @@ function deepScan(): ScanResult {
         bestClientScore = sc;
         out.client = subClient;
       }
+      recordAnswers(subClient, "client");
+      recordAnswers(subClient.question, "client.question");
+      recordAnswers(subClient.currentQuestion, "client.currentQuestion");
+      for (const k of ["questions", "freeQuestions"]) {
+        const arr = subClient[k];
+        if (Array.isArray(arr)) {
+          for (const q of arr) {
+            if (q && typeof q === "object") {
+              pushQuestion(q);
+              recordAnswers(q, "client." + k);
+            }
+          }
+        }
+      }
     }
     if (isQuestionList(o) && !out.lists.includes(o)) out.lists.push(o);
     for (const k of ["questions", "freeQuestions"]) {
@@ -488,9 +523,13 @@ function deepScan(): ScanResult {
       }
     }
     pushQuestion(o);
+    recordAnswers(o, "object");
     for (const k of ["question", "text", "prompt", "currentQuestion", "questionData"]) {
       const sub = o[k];
-      if (sub && typeof sub === "object") pushQuestion(sub);
+      if (sub && typeof sub === "object") {
+        pushQuestion(sub);
+        recordAnswers(sub, k);
+      }
     }
     for (const k of ["questions", "freeQuestions", "questionSet"]) {
       const arr = o[k];
@@ -698,6 +737,10 @@ function wrapNode(inst: AnyNode | null, scan: ScanResult): AnyNode {
       if (prop === "firebase") return scan.firebase;
       if (prop === "onAnswerOwner") return scan.methods.onAnswer?.owner ?? null;
       if (prop === "lists") return lists ? lists.slice() : [];
+      if (prop === "answerSources") {
+        return scan.answers.map((e) => e.obj);
+      }
+      if (prop === "hasCorrectAnswers") return scan.answers.length > 0;
       if (prop === "props") {
         const base = inst?.props ?? {};
         return {
@@ -937,6 +980,13 @@ export function stateDiagnostics(): Record<string, any> {
     onAnswer: typeof scan.methods.onAnswer?.fn === "function",
     sendAnswerNext: typeof scan.methods.sendAnswerNext?.fn === "function",
     lists: scan.lists.length,
+    answerSources: scan.answers.map((e) => ({
+      source: e.source,
+      prompt: questionTextOf(e.obj) || "(no text)",
+      answers: (answerArrayOf(e.obj) ?? []).length,
+      correctAnswers: Array.isArray(e.obj.correctAnswers) ? e.obj.correctAnswers.slice(0, 8) : (e.obj.correctAnswers ?? e.obj.correctAnswer ?? e.obj.correct ?? null),
+    })),
+    anyCorrectAnswers: scan.answers.length > 0,
     methods: Object.keys(scan.methods),
     fibers: collectFibers().length,
     devtools: !!(window as AnyNode).__REACT_DEVTOOLS_GLOBAL_HOOK__,
